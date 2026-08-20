@@ -45,6 +45,51 @@ const WS_ENDPOINT = flag("endpoint", process.env.WXMP_WS_ENDPOINT || "ws://local
 const PROOF_DIR = flag("proof-dir", process.env.WXMP_PROOF_DIR || process.cwd());
 const CONNECT_TIMEOUT = Number(flag("connect-timeout", process.env.WXMP_CONNECT_TIMEOUT || 30000));
 const FIXTURE_DEFAULTS = flag("fixture", process.env.WXMP_FIXTURE_DEFAULTS || "");
+// Browser runs get a screenshot per step from PlaywrightManager; mini program
+// runs had evidence only when a case asked for it, so reports came back with
+// nothing to look at. Capture around actions here instead, which keeps the
+// evidence chain without every case having to spell it out.
+const AUTO_SHOT = flag("auto-screenshot", process.env.WXMP_AUTO_SCREENSHOT || "on") !== "off";
+
+/** Tools that change what is on screen and are therefore worth capturing. */
+const CAPTURED = new Set([
+  "mp_login_as",
+  "mp_navigate",
+  "mp_tap_text",
+  "mp_tap",
+  "mp_input_text",
+  "mp_input",
+  "mp_swipe",
+  "mp_trigger",
+  "mp_auth_phone",
+]);
+
+let shotSeq = 0;
+// Hercules respawns this server once per scenario, so a sequence number alone
+// restarts at 1 every time and later scenarios overwrite earlier screenshots.
+// Stamping the process start keeps each scenario's evidence separate.
+const RUN_STAMP = new Date()
+  .toISOString()
+  .replace(/[-:T]/g, "")
+  .slice(4, 13);
+
+async function captureAfter(toolName) {
+  if (!AUTO_SHOT || !CAPTURED.has(toolName)) return null;
+  try {
+    const mp = await getMiniProgram();
+    const page = await mp.currentPage();
+    const slug = String(page.path).replace(/[^a-zA-Z0-9]/g, "_").slice(-40);
+    shotSeq += 1;
+    const name = `${RUN_STAMP}_${String(shotSeq).padStart(3, "0")}_${toolName}_${slug}.png`;
+    fs.mkdirSync(PROOF_DIR, { recursive: true });
+    await mp.screenshot({ path: path.join(PROOF_DIR, name) });
+    return name;
+  } catch (err) {
+    // Evidence is a nice-to-have; never fail the step over it.
+    log(`auto screenshot after ${toolName} failed: ${err.message}`);
+    return null;
+  }
+}
 
 /**
  * Mirrors fe_app/packages/e2e/tests/utils/test-router.ts. Tests name routes
@@ -931,7 +976,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   try {
     const text = await handler(args);
-    return { content: [{ type: "text", text: String(text) }] };
+    const shot = await captureAfter(name);
+    return {
+      content: [{ type: "text", text: String(text) + (shot ? `\n[screenshot: ${shot}]` : "") }],
+    };
   } catch (err) {
     log(`${name} failed:`, err.message);
     return {
@@ -959,5 +1007,5 @@ await server.connect(new StdioServerTransport());
 log(
   `ready (endpoint=${WS_ENDPOINT}, fixture=${
     Object.keys(FIXTURE).length ? FIXTURE_DEFAULTS : "NONE - pass --fixture"
-  })`
+  }, auto-screenshot=${AUTO_SHOT ? PROOF_DIR : "off"})`
 );
