@@ -24,10 +24,27 @@ import automator from "miniprogram-automator";
 import { applyDevToolsCompat } from "./compat.mjs";
 import { parseWxml, formatSnapshot, findByText } from "./wxml.mjs";
 
-const WS_ENDPOINT = process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420";
-const PROOF_DIR = process.env.WXMP_PROOF_DIR || process.cwd();
-const CONNECT_TIMEOUT = Number(process.env.WXMP_CONNECT_TIMEOUT || 30000);
-const FIXTURE_DEFAULTS = process.env.WXMP_FIXTURE_DEFAULTS || "";
+/**
+ * Config comes from CLI flags first, environment second.
+ *
+ * The flags exist because environment variables do not survive the MCP stdio
+ * boundary: the Python SDK's get_default_environment() forwards only HOME,
+ * LOGNAME, PATH, SHELL and USER to the child, and Hercules' server config
+ * (mcp_help.py) has no `env` field to override that. So anything this server
+ * needs has to travel in argv, spelled out in mcp_servers.json.
+ */
+function flag(name, fallback = "") {
+  const i = process.argv.indexOf(`--${name}`);
+  if (i !== -1 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--")) {
+    return process.argv[i + 1];
+  }
+  return fallback;
+}
+
+const WS_ENDPOINT = flag("endpoint", process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420");
+const PROOF_DIR = flag("proof-dir", process.env.WXMP_PROOF_DIR || process.cwd());
+const CONNECT_TIMEOUT = Number(flag("connect-timeout", process.env.WXMP_CONNECT_TIMEOUT || 30000));
+const FIXTURE_DEFAULTS = flag("fixture", process.env.WXMP_FIXTURE_DEFAULTS || "");
 
 /**
  * Mirrors fe_app/packages/e2e/tests/utils/test-router.ts. Tests name routes
@@ -44,6 +61,38 @@ const ROUTES = {
   webview: "/features/webview/pages/index",
 };
 const TAB_ROUTES = new Set(["home", "chat", "mine"]);
+
+/**
+ * Chinese aliases so scenarios can be written the way the app labels things.
+ * The tab names come from the bundle's app.json tabBar; the rest match the
+ * wording used in the UI. Without these a model has to translate "我的" to
+ * "mine" on its own, which it usually gets right and occasionally does not --
+ * not a good trade for test assets that must behave the same every run.
+ */
+const ROUTE_ALIASES = {
+  首页: "home",
+  主页: "home",
+  对话: "chat",
+  聊天: "chat",
+  我的: "mine",
+  个人中心: "mine",
+  登录: "login",
+  登录页: "login",
+  量表: "luxxTest",
+  注销: "unregister",
+  注销账号: "unregister",
+};
+
+function resolveRoute(input) {
+  const key = ROUTE_ALIASES[input] ?? input;
+  if (Object.prototype.hasOwnProperty.call(ROUTES, key)) {
+    return { key, path: ROUTES[key], named: true };
+  }
+  if (typeof input === "string" && input.startsWith("/")) {
+    return { key: null, path: input, named: false };
+  }
+  return null;
+}
 
 const TOKENS_KEY = "esm_tokens";
 const USER_KEY = "esm_user";
@@ -69,7 +118,7 @@ function loadFixtureDefaults() {
     // Accepts the e2e fixture shape ({defaults: {...}}) or a bare defaults object.
     return parsed.defaults ?? parsed;
   } catch (err) {
-    log(`failed to load WXMP_FIXTURE_DEFAULTS: ${err.message}`);
+    log(`failed to load fixture defaults: ${err.message}`);
     return {};
   }
 }
@@ -127,7 +176,8 @@ const TOOLS = [
     name: "mp_navigate",
     description:
       "Go to a page by its route name: login, home, chat, mine, luxxTest, " +
-      "unregister, webview. Prefer the name over a raw path. Tab pages are " +
+      "unregister, webview. Chinese names also work: 首页, 对话, 我的, 登录, " +
+      "量表, 注销账号. Prefer the name over a raw path. Tab pages are " +
       "switched to and other pages are pushed automatically, so you do not " +
       "pick a navigation method. Pass a path starting with / only for a page " +
       "that has no route name.",
@@ -136,7 +186,7 @@ const TOOLS = [
       properties: {
         route: {
           type: "string",
-          description: "Route name such as mine, or an absolute path",
+          description: "Route name such as mine or 我的, or an absolute path",
         },
         method: {
           type: "string",
@@ -415,16 +465,17 @@ const handlers = {
       await mp.navigateBack();
       return "Navigated back.";
     }
-    const isName = Object.prototype.hasOwnProperty.call(ROUTES, route);
-    const path = isName ? ROUTES[route] : route;
-    if (!path || !path.startsWith("/")) {
+    const resolved = resolveRoute(route);
+    if (!resolved) {
       throw new Error(
-        `Unknown route "${route}". Use one of ${Object.keys(ROUTES).join(", ")} ` +
+        `Unknown route "${route}". Use one of ${Object.keys(ROUTES).join(", ")}, ` +
+          `a Chinese name such as ${Object.keys(ROUTE_ALIASES).slice(0, 4).join("/")}, ` +
           "or an absolute path starting with /."
       );
     }
+    const { key, path } = resolved;
     const how =
-      method !== "auto" ? method : isName && TAB_ROUTES.has(route) ? "switchTab" : "reLaunch";
+      method !== "auto" ? method : key && TAB_ROUTES.has(key) ? "switchTab" : "reLaunch";
     await mp[how](path);
     return `${how} -> ${path}`;
   },
@@ -516,7 +567,9 @@ const handlers = {
     if (!Object.keys(tokens).length && !Object.keys(user).length) {
       throw new Error(
         "No fixture defaults loaded, so there is nothing to sign in with. " +
-          "Point WXMP_FIXTURE_DEFAULTS at the e2e fixture defaults.json."
+          "Pass --fixture <path-to-defaults.json> in this server's args in " +
+          "mcp_servers.json. An environment variable is not enough: MCP does " +
+          "not forward it across the stdio boundary."
       );
     }
     if (Object.keys(tokens).length) await mp.callWxMethod("setStorageSync", TOKENS_KEY, tokens);
@@ -650,5 +703,7 @@ process.on("SIGTERM", shutdown);
 
 await server.connect(new StdioServerTransport());
 log(
-  `ready (endpoint=${WS_ENDPOINT}, fixture=${Object.keys(FIXTURE).length ? "loaded" : "none"})`
+  `ready (endpoint=${WS_ENDPOINT}, fixture=${
+    Object.keys(FIXTURE).length ? FIXTURE_DEFAULTS : "NONE - pass --fixture"
+  })`
 );
