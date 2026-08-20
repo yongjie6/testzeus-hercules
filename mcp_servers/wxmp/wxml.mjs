@@ -57,7 +57,7 @@ export function parseWxml(wxml) {
 function finish(node, nodes) {
   const text = node.text.join(" ").replace(/\s+/g, " ").trim();
   const interactive = INTERACTIVE.has(node.tag);
-  if (!text && !interactive) return;
+  if (!text && !interactive && !node.attrs["aria-label"]) return;
   nodes.push({
     tag: node.tag,
     id: node.attrs.id || node.attrs["data-sid"] || null,
@@ -70,6 +70,10 @@ function finish(node, nodes) {
     // reads to know which field is which, so it is how we address them.
     placeholder: node.attrs.placeholder || null,
     value: node.attrs.value || null,
+    // Icon-only controls carry no text; aria-label is their accessible name and
+    // what getByRole(role, {name}) matches on, so it is how a person refers to
+    // them. Without it a hamburger or a copy button cannot be addressed at all.
+    label: node.attrs["aria-label"] || null,
   });
 }
 
@@ -79,7 +83,7 @@ export function formatSnapshot(nodes) {
   const seen = new Set();
   const lines = [];
   for (const n of nodes) {
-    const key = `${n.tag}|${n.text}|${n.id}|${n.placeholder}`;
+    const key = `${n.tag}|${n.text}|${n.label}|${n.id}|${n.placeholder}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const bits = [];
@@ -91,7 +95,9 @@ export function formatSnapshot(nodes) {
     if (n.value) bits.push(`value="${n.value}"`);
     if (n.src) bits.push(`src=${n.src.slice(0, 60)}`);
     const suffix = bits.length ? `  [${bits.join(" ")}]` : "";
-    lines.push(`${n.tag}${n.text ? ` "${n.text}"` : ""}${suffix}`);
+    const name = n.text || n.label || "";
+    const kind = !n.text && n.label ? " (icon)" : "";
+    lines.push(`${n.tag}${name ? ` "${name}"` : ""}${kind}${suffix}`);
   }
   return lines.join("\n");
 }
@@ -99,9 +105,15 @@ export function formatSnapshot(nodes) {
 /** Elements whose text matches, most specific (shortest text) first. */
 export function findByText(nodes, needle, exact = false) {
   const want = needle.trim();
-  return nodes
-    .filter((n) => n.id && n.text && (exact ? n.text === want : n.text.includes(want)))
-    .sort((a, b) => a.text.length - b.text.length);
+  const hit = (value) => value && (exact ? value === want : value.includes(want));
+  // Visible text wins over an accessible name: when both could match, the thing
+  // the user can actually read is the better guess at what a case meant.
+  const byText = nodes.filter((n) => n.id && hit(n.text));
+  const byLabel = nodes.filter((n) => n.id && !hit(n.text) && hit(n.label));
+  return [
+    ...byText.sort((a, b) => a.text.length - b.text.length),
+    ...byLabel.sort((a, b) => a.label.length - b.label.length),
+  ];
 }
 
 const INPUT_TAGS = new Set(["input", "textarea"]);

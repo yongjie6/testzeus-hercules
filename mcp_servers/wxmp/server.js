@@ -228,7 +228,9 @@ async function elementShowing(text, exact = false) {
   const { page, nodes } = await readPage();
   const hits = findByText(nodes, text, exact);
   if (!hits.length) {
-    const visible = nodes.filter((n) => n.text).map((n) => `"${n.text}"`);
+    const visible = nodes
+      .filter((n) => n.text || n.label)
+      .map((n) => (n.text ? `"${n.text}"` : `"${n.label}"(icon)`));
     throw new Error(
       `No element showing "${text}" on ${page.path}. Visible text: ` +
         (visible.length ? visible.join(", ") : "(none)")
@@ -287,6 +289,8 @@ const TOOLS = [
     name: "mp_tap_text",
     description:
       "Tap the element showing this text, e.g. the button labelled '退出登录'. " +
+      "Icon-only buttons match on their accessible name instead, which snapshot " +
+      "shows as (icon) -- '复制' or '会话' reach them the same way. " +
       "Prefer this over mp_tap with a selector: it matches what the user sees " +
       "and does not depend on class names or element order. Run mp_snapshot " +
       "first if you are unsure of the exact wording.",
@@ -692,7 +696,7 @@ const handlers = {
     const el = await page.$(`#${target.id}`);
     if (!el) throw new Error(`Element #${target.id} disappeared before it could be tapped.`);
     await el.tap();
-    return `Tapped ${target.tag} "${target.text}"`;
+    return `Tapped ${target.tag} "${target.text || target.label}"`;
   },
 
   async mp_input_text({ text, into = "" }) {
@@ -724,7 +728,7 @@ const handlers = {
   async mp_trigger({ text, event, detail = {} }) {
     const { el, target } = await elementShowing(text);
     await el.trigger(event, detail);
-    return `Fired ${event} on ${target.tag} "${target.text}"`;
+    return `Fired ${event} on ${target.tag} "${target.text || target.label}"`;
   },
 
   async mp_swipe({ text, selector, direction, distance = 80, until }) {
@@ -798,7 +802,7 @@ const handlers = {
   async mp_auth_phone({ text, code = "wxmp-test-code" }) {
     const { el, target } = await elementShowing(text);
     await el.trigger("getphonenumber", { code });
-    return `Delivered phone authorisation to "${target.text}"`;
+    return `Delivered phone authorisation to "${target.text || target.label}"`;
   },
 
   async mp_get_clipboard() {
