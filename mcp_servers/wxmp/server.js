@@ -21,12 +21,15 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import automator from "miniprogram-automator";
+import { applyDevToolsCompat } from "./compat.mjs";
 
 const WS_ENDPOINT = process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420";
 const PROOF_DIR = process.env.WXMP_PROOF_DIR || process.cwd();
 const CONNECT_TIMEOUT = Number(process.env.WXMP_CONNECT_TIMEOUT || 30000);
 
 const log = (...args) => console.error("[wxmp]", ...args);
+
+applyDevToolsCompat((msg) => log(msg));
 
 /* ------------------------------------------------------------------ *
  * Login profiles

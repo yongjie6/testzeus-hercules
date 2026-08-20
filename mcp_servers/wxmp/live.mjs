@@ -9,6 +9,9 @@
  * It does not tap, navigate or write anything.
  */
 import automator from "miniprogram-automator";
+import { applyDevToolsCompat } from "./compat.mjs";
+
+applyDevToolsCompat((msg) => console.log(`  ${msg}`));
 
 const WS = process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420";
 
