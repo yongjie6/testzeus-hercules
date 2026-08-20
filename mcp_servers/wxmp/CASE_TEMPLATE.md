@@ -53,7 +53,7 @@ Feature: <模块名，对应原 TC 的分组>
 | `点击「退出登录」` | `mp_tap_text`，按可见文案 |
 | `在「昵称」输入「新名字」` | `mp_input_text`，按 placeholder 或旁边的标签定位 |
 | `输入「新名字」` | 同上；页面只有一个输入框时可省略字段名 |
-| `在「对话列表」上向左滑动` | `mp_swipe`，播放触摸序列 |
+| `在「对话列表」上向左滑动，直到看到「X」` | `mp_swipe`，**必须带"直到看到"**，见下方说明 |
 | `完成手机号授权` | `mp_auth_phone`，绕过原生授权弹窗 |
 | `查看当前页面` | `mp_snapshot`，列出全部可见文案和控件 |
 | `截图记录<说明>` | `mp_screenshot`，存进 proofs |
@@ -129,6 +129,28 @@ Scenario: 修改昵称后展示新昵称
 
 该页只有一个输入框，所以省略了字段名。页面有多个输入框时写成 `在「昵称」输入「...」`，用 placeholder 或旁边的标签指明。
 
+### TC-CHATLIST-001 —— 可转，但手势要带成功判据
+
+```ts
+const root = page.locator('.chat-page')
+await root.dispatchEvent('touchstart', { touches: [{ clientX: 0, clientY: 200 }] })
+await root.dispatchEvent('touchmove',  { touches: [{ clientX: 80, clientY: 200 }] })
+await root.dispatchEvent('touchend',   { touches: [{ clientX: 80, clientY: 200 }] })
+await expect(page.getByText('对话列表')).toBeVisible()
+```
+
+```gherkin
+Scenario: 右滑打开对话列表
+  Given 以 logged-in 状态进入小程序
+  When 跳转到「对话」页面
+  And 在 .chat-page 上向右滑动，直到看到「对话列表」
+  Then 应该看到「对话列表」
+```
+
+**手势是唯一允许写选择器的地方。** 事件通常绑在没有文案的布局容器上（这里是 `.chat-page`），而编译后的 WXML 里 `bind*` 属性已被剥离，没有任何办法语义化地识别它。你们原 TC 也是直接写 `.chat-page`。
+
+**「直到看到」不是可选的。** 实测手势单次成功率约 **7/8**——组件对滑动速度敏感，而每次触摸事件都是一次进程间往返，快慢不完全可控。带上成功判据后工具会自动重试，实测 6/6 全通。不带的话你的用例会间歇性挂，且很难查。
+
 ## 红线
 
 以下写法**不要出现**在用例里：
@@ -149,7 +171,8 @@ Scenario: 修改昵称后展示新昵称
 | --- | --- |
 | **web-view 内的 H5** | MCP 够不到内嵌浏览器上下文。用 `mp_webview_url` 读出地址再交给浏览器工具，见 README |
 | **原生弹窗** | 支付、订阅消息等；`mp_mock_wx` 能绕开一部分，无法真正交互 |
-| **精确坐标手势** | `mp_swipe` 用固定起点播放触摸序列，依赖精确坐标的组件可能不生效 |
+| **精确坐标手势** | `mp_swipe` 从固定起点出发，依赖真实坐标的组件可能不生效 |
+| **多指手势** | 缩放、旋转等无对应能力 |
 
 ## 转换前的检查清单
 

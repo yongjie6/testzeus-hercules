@@ -94,6 +94,12 @@ function resolveRoute(input) {
   return null;
 }
 
+// Gesture tuning, both settled by repeated runs against the app: a single
+// touchmove almost never registers, and more than a handful stretches the
+// gesture until it reads as a slow pan instead of a swipe.
+const SWIPE_STEPS = 5;
+const SWIPE_ATTEMPTS = 4;
+
 const TOKENS_KEY = "esm_tokens";
 const USER_KEY = "esm_user";
 
@@ -293,13 +299,28 @@ const TOOLS = [
   {
     name: "mp_swipe",
     description:
-      "Swipe on the element showing this text, for gestures such as sliding a " +
-      "list row open. Mini programs have no real pointer, so this plays a touch " +
-      "sequence the component sees as a swipe.",
+      "Swipe, for gestures such as sliding a list row open or revealing a side " +
+      "panel. Target it with `text` when the element shows text, or `selector` " +
+      "for the layout container a page-level gesture is bound to; with neither, " +
+      "the page root is used. Mini programs have no real pointer, so this plays " +
+      "a touch sequence the component sees as a swipe. Pass `until` with the " +
+      "text the gesture should reveal so it can retry, because the gesture is " +
+      "not reliable on a single attempt.",
     inputSchema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "Visible text of the element to swipe on" },
+        text: {
+          type: "string",
+          description: "Visible text of the element to swipe on",
+        },
+        selector: {
+          type: "string",
+          description:
+            "WXML selector of the container to swipe, e.g. '.chat-page'. Gestures " +
+            "are usually bound to a layout container with no text of its own, and " +
+            "the compiled markup does not say which one, so naming it is allowed " +
+            "here even though selectors are avoided elsewhere.",
+        },
         direction: {
           type: "string",
           enum: ["left", "right", "up", "down"],
@@ -309,8 +330,15 @@ const TOOLS = [
           type: "number",
           description: "Pixels to travel, defaults to 80",
         },
+        until: {
+          type: "string",
+          description:
+            "Text the swipe is meant to reveal, e.g. '对话列表'. Strongly " +
+            "recommended: the gesture only lands about 7 times in 8, and with " +
+            "this the swipe is repeated until the text appears.",
+        },
       },
-      required: ["text", "direction"],
+      required: ["direction"],
     },
   },
   {
@@ -654,17 +682,72 @@ const handlers = {
     return `Fired ${event} on ${target.tag} "${target.text}"`;
   },
 
-  async mp_swipe({ text, direction, distance = 80 }) {
-    const { el, target } = await elementShowing(text);
+  async mp_swipe({ text, selector, direction, distance = 80, until }) {
+    const locate = async () => {
+      if (text) {
+        const found = await elementShowing(text);
+        return { el: found.el, label: `"${found.target.text}"` };
+      }
+      const mp = await getMiniProgram();
+      const page = await mp.currentPage();
+      if (selector) {
+        const el = await page.$(selector);
+        if (!el) throw new Error(`No element matched "${selector}" on ${page.path}.`);
+        return { el, label: selector };
+      }
+      // Page-level gestures are bound to a container with no text of its own.
+      const el = await page.$("page");
+      if (!el) throw new Error(`Page ${page.path} exposed no root node.`);
+      return { el, label: `page ${page.path}` };
+    };
+
     const axis = direction === "left" || direction === "right" ? "clientX" : "clientY";
     const sign = direction === "left" || direction === "up" ? -1 : 1;
-    const start = { clientX: 0, clientY: 200 };
-    const end = { ...start, [axis]: start[axis] + sign * distance };
-    // Components read the gesture from the touch sequence, so all three fire.
-    await el.trigger("touchstart", { touches: [start] });
-    await el.trigger("touchmove", { touches: [end] });
-    await el.trigger("touchend", { touches: [end] });
-    return `Swiped ${direction} ${distance}px on "${target.text}"`;
+
+    const play = async (el) => {
+      const at = (travelled) => {
+        const point = { clientX: 0, clientY: 200, [axis]: sign * travelled };
+        // Components read touchend off changedTouches, and automator's real
+        // touch methods produce a truer event than the generic trigger();
+        // smart-page.ts does both and the gesture does not register without it.
+        return { touches: [point], changedTouches: [point] };
+      };
+      await el.touchstart(at(0));
+      // A single jump is read as a teleport rather than a swipe, and too many
+      // small ones drag the gesture out until it reads as a slow pan. Five
+      // measured best across repeated runs against the app.
+      for (let i = 1; i <= SWIPE_STEPS; i++) {
+        await el.touchmove(at(Math.round((distance * i) / SWIPE_STEPS)));
+      }
+      await el.touchend(at(distance));
+    };
+
+    const seen = async (needle) => {
+      const { nodes } = await readPage();
+      return nodes.some((n) => n.text && n.text.includes(needle));
+    };
+
+    if (!until) {
+      const { el, label } = await locate();
+      await play(el);
+      return `Swiped ${direction} ${distance}px on ${label}`;
+    }
+
+    let label = "";
+    for (let attempt = 1; attempt <= SWIPE_ATTEMPTS; attempt++) {
+      const found = await locate();
+      label = found.label;
+      await play(found.el);
+      if (await seen(until)) {
+        return `Swiped ${direction} on ${label}; "${until}" is now showing` +
+          (attempt > 1 ? ` (took ${attempt} attempts)` : "");
+      }
+    }
+    throw new Error(
+      `Swiped ${direction} on ${label} ${SWIPE_ATTEMPTS} times but "${until}" ` +
+        "never appeared. Either the gesture is not what this component listens " +
+        "for, or the expected text is wrong."
+    );
   },
 
   async mp_auth_phone({ text, code = "wxmp-test-code" }) {
