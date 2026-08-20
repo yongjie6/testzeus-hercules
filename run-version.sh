@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# 跑某个产品版本的全部用例（累积：含该版本及之前引入的所有用例）
-#   ./run-version.sh 2.0            跑 v2.0 全量回归
+# 跑一个版本的用例，或核心回归集
+#   ./run-version.sh 2.0            只跑 v2.0 自己的用例
 #   ./run-version.sh 2.0 mine       只跑 v2.0 里的 mine 套件
+#   ./run-version.sh regression     跑核心回归集（按 opt/cases/regression.txt 挑选）
 set -euo pipefail
-V="${1:?用法: ./run-version.sh <版本> [套件名]   例如 2.0 / 2.0 mine}"
+V="${1:?用法: ./run-version.sh <版本|regression> [套件名]   例如 2.0 / 2.0 mine / regression}"
 SUITE="${2:-}"
 
 ./assemble_version.py "$V"
