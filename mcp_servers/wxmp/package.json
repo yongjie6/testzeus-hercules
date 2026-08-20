@@ -15,6 +15,7 @@
     "miniprogram-automator": "^0.12.1"
   },
   "scripts": {
-    "smoke": "node smoke.mjs"
+    "smoke": "node smoke.mjs",
+    "live": "node live.mjs"
   }
 }
