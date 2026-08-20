@@ -318,6 +318,17 @@ const TOOLS = [
     },
   },
   {
+    name: "mp_webview_url",
+    description:
+      "Return the URL loaded by the <web-view> component on the current page, " +
+      "or 'none' if the page has no web-view. Automation cannot reach inside a " +
+      "web-view -- the embedded H5 is a separate browser context. Use this to " +
+      "read the live URL (it usually carries signed, short-lived query params) " +
+      "and then hand that URL to the browser agent to test the H5 page on its " +
+      "own. Do not try to tap or read elements inside the web-view.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
     name: "mp_evaluate",
     description:
       "Escape hatch: evaluate a JavaScript expression inside the mini program " +
@@ -465,6 +476,17 @@ const handlers = {
     const file = path.join(PROOF_DIR, `wxmp_${safe}.png`);
     await mp.screenshot({ path: file });
     return `Screenshot saved: ${file}`;
+  },
+
+  async mp_webview_url() {
+    const mp = await getMiniProgram();
+    const page = await mp.currentPage();
+    const el = await page.$("web-view");
+    if (!el) return "none";
+    // The element itself is queryable as ordinary WXML; only its *content*
+    // is out of reach. src is what bridges to the browser agent.
+    const src = await el.attribute("src");
+    return src || "none";
   },
 
   async mp_evaluate({ expression }) {

@@ -103,6 +103,7 @@ WXMP_PROOF_DIR=opt/proofs
 | `mp_mock_wx` / `mp_restore_wx` | mock wx API |
 | `mp_wait` | 等选择器或固定毫秒 |
 | `mp_screenshot` | 截图存证 |
+| `mp_webview_url` | 读出 web-view 的 src，桥接到浏览器测试 |
 | `mp_evaluate` | 逃生舱，逻辑层执行 JS |
 
 选择器是 **WXML 选择器**，不是浏览器 DOM 的 CSS 选择器。
@@ -135,11 +136,54 @@ target_helper 应始终为 mcp。
 
 这是实际接入时第一个会踩的坑。
 
+## web-view / 内嵌 H5
+
+**官方 automator 不支持 web-view。** 它是为原生组件测试设计的，API 里没有任何 iframe/webview context 能力。`page.$("web-view")` 能拿到**组件本身**，但拿不到里面的 DOM——内嵌 H5 是独立的浏览器上下文。
+
+所以别想着"钻进去"，正确做法是**拆**。按成本从低到高：
+
+### 1 · 绕开（登录场景首选）
+
+如果 web-view 只是拿 token 的手段，用 `mp_login_as` 直接注入登录态，根本不碰 H5。多数「H5 授权页」场景到这里就结束了。
+
+### 2 · 拆测（推荐）
+
+H5 就是普通网页，而 **Hercules 本来就有完整的 Playwright 栈**。把测试拆成两段：
+
+- 小程序壳 → `mmcp_wxmp_*` 工具
+- H5 页面 → Hercules 原生浏览器工具（`open_url` / `click` / `get_interactive_elements` …）
+
+桥梁是 `mp_webview_url`：运行时从小程序里读出真实 URL 再交给浏览器 Agent。**不要把 URL 硬编码进 feature 文件**——它通常带签名和时效参数，写死了很快就过期。
+
+```gherkin
+Scenario: 内嵌 H5 活动页能正常下单
+  Given 通过 MCP 以 vip_user 身份登录小程序
+  When 跳转到 /pages/activity/activity
+  And 读取当前页面 web-view 的 URL
+  Then 在浏览器中打开该 URL
+  And 点击「立即下单」按钮
+  And 应该看到下单成功提示
+```
+
+两个注意点：
+
+- H5 可能校验 **WeChat UA**，需要时用 `BROWSER_COOKIES` / UA 相关配置伪装
+- H5 若依赖 `wx.miniProgram.postMessage` 之类的 JSSDK 桥接，脱离小程序环境会失效，那部分只能靠第 3 档
+
+### 3 · CDP 进模拟器（兜底，脆弱）
+
+开发者工具是 Electron，能带 `--remote-debugging-port` 启动，之后用 Playwright `connectOverCDP` attach，在 targets 里找到 web-view 那个 iframe，就能真的操作 H5 内部。
+
+代价：要用特定 flag 重启开发者工具、target 定位没有稳定契约、工具升级容易破。**只在第 2 档确实覆盖不了（比如要验小程序 ↔ H5 的 postMessage 通信链路）时再用。**
+
+### 4 · 真机 Android CDP
+
+`adb forward tcp:9222 localabstract:xweb_devtools_remote_<pid>`，配合在微信里访问 `http://debugxweb.qq.com/?inspector=true` 开启远程调试。只在必须验证真机行为时用，不适合进 CI。
+
 ## 已知边界
 
 - **原生弹窗点不到** —— 授权、支付、订阅消息都是原生 UI，只能 `mp_mock_wx` 绕
 - **支付流程**基本无法在模拟器自动化
-- **web-view 内嵌 H5 是盲区** —— `page.$()` 拿不到 iframe 内部。登录若走 H5 授权页，这条路不通
 - **手机号授权解密**依赖真实 `session_key`，模拟器里可能拿不到有效数据
 - **CI 需要 macOS / Windows runner** —— 微信开发者工具没有 Linux 版，进不了 Docker
 
