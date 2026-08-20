@@ -1,0 +1,15 @@
+{
+  "vip_user": {
+    "storage": {
+      "token": "REPLACE_WITH_TEST_TOKEN",
+      "userId": "1001"
+    },
+    "relaunch": "/pages/index/index"
+  },
+  "new_user": {
+    "storage": {
+      "token": "REPLACE_WITH_TEST_TOKEN_2",
+      "userId": "2002"
+    }
+  }
+}

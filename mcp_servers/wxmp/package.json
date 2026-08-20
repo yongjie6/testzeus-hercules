@@ -1,0 +1,20 @@
+{
+  "name": "wxmp-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server exposing WeChat Mini Program automation to TestZeus Hercules",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "wxmp-mcp": "./server.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "miniprogram-automator": "^0.12.1"
+  },
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  }
+}
