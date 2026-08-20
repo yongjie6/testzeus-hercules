@@ -22,10 +22,31 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import automator from "miniprogram-automator";
 import { applyDevToolsCompat } from "./compat.mjs";
+import { parseWxml, formatSnapshot, findByText } from "./wxml.mjs";
 
 const WS_ENDPOINT = process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420";
 const PROOF_DIR = process.env.WXMP_PROOF_DIR || process.cwd();
 const CONNECT_TIMEOUT = Number(process.env.WXMP_CONNECT_TIMEOUT || 30000);
+const FIXTURE_DEFAULTS = process.env.WXMP_FIXTURE_DEFAULTS || "";
+
+/**
+ * Mirrors fe_app/packages/e2e/tests/utils/test-router.ts. Tests name routes
+ * instead of spelling out paths, per that suite's conventions; tab routes need
+ * switchTab rather than navigateTo, which is why the two lists are separate.
+ */
+const ROUTES = {
+  login: "/features/auth/pages/login/index",
+  home: "/pages/index/index",
+  chat: "/features/chat/pages/index",
+  mine: "/features/mine/pages/index",
+  luxxTest: "/features/luxx_test/pages/index",
+  unregister: "/features/account/pages/unregister/index",
+  webview: "/features/webview/pages/index",
+};
+const TAB_ROUTES = new Set(["home", "chat", "mine"]);
+
+const TOKENS_KEY = "esm_tokens";
+const USER_KEY = "esm_user";
 
 const log = (...args) => console.error("[wxmp]", ...args);
 
@@ -38,20 +59,22 @@ applyDevToolsCompat((msg) => log(msg));
  * ("vip_user"); the real credential is resolved here, in-process.
  * ------------------------------------------------------------------ */
 
-function loadLoginProfiles() {
-  const raw = process.env.WXMP_LOGIN_PROFILES;
-  if (!raw) return {};
+function loadFixtureDefaults() {
+  if (!FIXTURE_DEFAULTS) return {};
   try {
-    // Accept either an inline JSON object or a path to a JSON file.
-    if (raw.trim().startsWith("{")) return JSON.parse(raw);
-    return JSON.parse(fs.readFileSync(raw, "utf-8"));
+    const raw = FIXTURE_DEFAULTS.trim().startsWith("{")
+      ? FIXTURE_DEFAULTS
+      : fs.readFileSync(FIXTURE_DEFAULTS, "utf-8");
+    const parsed = JSON.parse(raw);
+    // Accepts the e2e fixture shape ({defaults: {...}}) or a bare defaults object.
+    return parsed.defaults ?? parsed;
   } catch (err) {
-    log("failed to load WXMP_LOGIN_PROFILES:", err.message);
+    log(`failed to load WXMP_FIXTURE_DEFAULTS: ${err.message}`);
     return {};
   }
 }
 
-const LOGIN_PROFILES = loadLoginProfiles();
+const FIXTURE = loadFixtureDefaults();
 
 /* ------------------------------------------------------------------ *
  * Connection (lazy singleton)
@@ -103,25 +126,53 @@ const TOOLS = [
   {
     name: "mp_navigate",
     description:
-      "Navigate the mini program to a page route. Use reLaunch to reset the " +
-      "page stack (preferred at the start of a test), navigateTo to push a " +
-      "page, switchTab for tabBar pages, navigateBack to pop. Route must be " +
-      "an absolute path such as /pages/index/index.",
+      "Go to a page by its route name: login, home, chat, mine, luxxTest, " +
+      "unregister, webview. Prefer the name over a raw path. Tab pages are " +
+      "switched to and other pages are pushed automatically, so you do not " +
+      "pick a navigation method. Pass a path starting with / only for a page " +
+      "that has no route name.",
     inputSchema: {
       type: "object",
       properties: {
+        route: {
+          type: "string",
+          description: "Route name such as mine, or an absolute path",
+        },
         method: {
           type: "string",
-          enum: ["reLaunch", "navigateTo", "redirectTo", "switchTab", "navigateBack"],
-          description: "Navigation method",
-        },
-        url: {
-          type: "string",
-          description:
-            "Absolute route with optional query, e.g. /pages/detail/detail?id=1. Omit for navigateBack.",
+          enum: ["auto", "reLaunch", "navigateTo", "redirectTo", "switchTab", "navigateBack"],
+          description: "Defaults to auto; override only when a test needs a specific method",
         },
       },
-      required: ["method"],
+      required: ["route"],
+    },
+  },
+  {
+    name: "mp_snapshot",
+    description:
+      "Show what is on the current page: every visible text and control, with " +
+      "the id needed to act on it. Call this before interacting with a page you " +
+      "have not inspected yet, and again after an action changes the screen. " +
+      "This is the mini program equivalent of looking at the app.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "mp_tap_text",
+    description:
+      "Tap the element showing this text, e.g. the button labelled '退出登录'. " +
+      "Prefer this over mp_tap with a selector: it matches what the user sees " +
+      "and does not depend on class names or element order. Run mp_snapshot " +
+      "first if you are unsure of the exact wording.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Visible text of the target element" },
+        exact: {
+          type: "boolean",
+          description: "Require the whole text to match; defaults to substring matching",
+        },
+      },
+      required: ["text"],
     },
   },
   {
@@ -214,20 +265,20 @@ const TOOLS = [
   {
     name: "mp_login_as",
     description:
-      "Log in as a preconfigured test user by alias, e.g. 'vip_user'. This " +
-      "writes that user's credentials into mini program storage and reloads " +
-      "the entry page. Prefer this over driving the real login UI: WeChat " +
-      "auth dialogs are native and cannot be tapped by automation. Never pass " +
-      "a raw token here -- only the alias.",
+      "Put the app into a known auth state before a test: 'logged-in' seeds the " +
+      "signed-in user and lands on the home page, 'guest' clears everything. " +
+      "Always start a test with this rather than driving the login screen — " +
+      "WeChat's auth dialogs are native and cannot be tapped by automation.",
     inputSchema: {
       type: "object",
       properties: {
-        profile: {
+        preset: {
           type: "string",
-          description: "Alias of a configured login profile",
+          enum: ["logged-in", "guest"],
+          description: "Auth state to set up",
         },
       },
-      required: ["profile"],
+      required: ["preset"],
     },
   },
   {
@@ -240,7 +291,10 @@ const TOOLS = [
       type: "object",
       properties: {
         key: { type: "string", description: "Storage key" },
-        value: { type: "string", description: "Value to store" },
+        value: {
+          description:
+            "Value to store. Objects are stored as-is; the app's own login keys hold objects, not strings.",
+        },
       },
       required: ["key", "value"],
     },
@@ -355,15 +409,54 @@ const TOOLS = [
  * ------------------------------------------------------------------ */
 
 const handlers = {
-  async mp_navigate({ method, url }) {
+  async mp_navigate({ route, method = "auto" }) {
     const mp = await getMiniProgram();
     if (method === "navigateBack") {
       await mp.navigateBack();
       return "Navigated back.";
     }
-    if (!url) throw new Error(`${method} requires a url.`);
-    await mp[method](url);
-    return `${method} -> ${url}`;
+    const isName = Object.prototype.hasOwnProperty.call(ROUTES, route);
+    const path = isName ? ROUTES[route] : route;
+    if (!path || !path.startsWith("/")) {
+      throw new Error(
+        `Unknown route "${route}". Use one of ${Object.keys(ROUTES).join(", ")} ` +
+          "or an absolute path starting with /."
+      );
+    }
+    const how =
+      method !== "auto" ? method : isName && TAB_ROUTES.has(route) ? "switchTab" : "reLaunch";
+    await mp[how](path);
+    return `${how} -> ${path}`;
+  },
+
+  async mp_snapshot() {
+    const mp = await getMiniProgram();
+    const page = await mp.currentPage();
+    const root = await page.$("page");
+    if (!root) return `Page ${page.path} exposed no root node.`;
+    const nodes = parseWxml(await root.wxml());
+    return `Page: ${page.path}\n${formatSnapshot(nodes)}`;
+  },
+
+  async mp_tap_text({ text, exact = false }) {
+    const mp = await getMiniProgram();
+    const page = await mp.currentPage();
+    const root = await page.$("page");
+    if (!root) throw new Error(`Page ${page.path} exposed no root node.`);
+    const nodes = parseWxml(await root.wxml());
+    const hits = findByText(nodes, text, exact);
+    if (!hits.length) {
+      const visible = nodes.filter((n) => n.text).map((n) => n.text);
+      throw new Error(
+        `No element showing "${text}" on ${page.path}. Visible text: ` +
+          (visible.length ? visible.map((t) => `"${t}"`).join(", ") : "(none)")
+      );
+    }
+    const target = hits[0];
+    const el = await page.$(`#${target.id}`);
+    if (!el) throw new Error(`Element #${target.id} disappeared before it could be tapped.`);
+    await el.tap();
+    return `Tapped ${target.tag} "${target.text}"`;
   },
 
   async mp_current_page() {
@@ -409,26 +502,30 @@ const handlers = {
     return JSON.stringify(result ?? null);
   },
 
-  async mp_login_as({ profile }) {
-    const conf = LOGIN_PROFILES[profile];
-    if (!conf) {
-      const known = Object.keys(LOGIN_PROFILES);
-      throw new Error(
-        `Unknown login profile "${profile}". Configured profiles: ` +
-          (known.length ? known.join(", ") : "(none -- set WXMP_LOGIN_PROFILES)")
-      );
-    }
+  async mp_login_as({ preset }) {
     const mp = await getMiniProgram();
     await mp.callWxMethod("clearStorageSync");
-    for (const [key, value] of Object.entries(conf.storage || {})) {
-      await mp.callWxMethod("setStorageSync", key, value);
+
+    if (preset === "guest") {
+      await mp.switchTab(ROUTES.home);
+      return "Guest state: storage cleared, on the home page.";
     }
-    const entry = conf.relaunch || "/pages/index/index";
-    await mp.reLaunch(entry);
-    // Deliberately does not echo the credential values back.
-    return `Logged in as "${profile}" (${
-      Object.keys(conf.storage || {}).length
-    } storage keys set), relaunched at ${entry}`;
+
+    const tokens = FIXTURE.tokens ?? {};
+    const user = FIXTURE.user ?? {};
+    if (!Object.keys(tokens).length && !Object.keys(user).length) {
+      throw new Error(
+        "No fixture defaults loaded, so there is nothing to sign in with. " +
+          "Point WXMP_FIXTURE_DEFAULTS at the e2e fixture defaults.json."
+      );
+    }
+    if (Object.keys(tokens).length) await mp.callWxMethod("setStorageSync", TOKENS_KEY, tokens);
+    if (Object.keys(user).length) await mp.callWxMethod("setStorageSync", USER_KEY, user);
+    for (const [k, v] of Object.entries(FIXTURE.storage ?? {})) {
+      await mp.callWxMethod("setStorageSync", k, v);
+    }
+    await mp.reLaunch(ROUTES.home);
+    return `Signed in as ${user.nickname || user.user_id || "the fixture user"}, on the home page.`;
   },
 
   async mp_set_storage({ key, value }) {
@@ -552,4 +649,6 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 await server.connect(new StdioServerTransport());
-log(`ready (endpoint=${WS_ENDPOINT}, profiles=${Object.keys(LOGIN_PROFILES).length})`);
+log(
+  `ready (endpoint=${WS_ENDPOINT}, fixture=${Object.keys(FIXTURE).length ? "loaded" : "none"})`
+);

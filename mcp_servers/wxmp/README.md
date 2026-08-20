@@ -14,19 +14,39 @@
 
 **③ token 不进 LLM。** `mp_login_as(alias)` 只让模型传别名，真实凭据在本进程内查表解析。原因见下方「安全」。
 
-## 前置条件
+## 环境（每次跑之前）
 
-1. 打开微信开发者工具并载入项目
-2. 设置 → 安全设置 → **服务端口** 打开
-3. `npm install`
+小程序不像浏览器，跑一条用例需要三样东西同时在位。缺任何一个的表现都是"页面加载失败"，但原因完全不同。
 
-验证协议层（不需要开发者工具在跑）：
+**1. mock 网关**
 
 ```bash
-npm run smoke
+cd <miniapp>/fe_app/packages/e2e && ./node_modules/.bin/tsx <此目录>/gateway.mts
 ```
 
-应该输出 17 个工具，并且在没有开发者工具时给出可读的错误而不是挂住。
+端口 39100/39101 是**编译进小程序包里的**，不能改。`gateway.mts` 用的是 e2e 那套 `startGateway` + `loadMergedFixture`，只是常驻运行——他们的 `test-env.ts` 每次 vitest 跑完就拆掉网关，那个生命周期和 Hercules 对不上。
+
+**2. 开发者工具打开 `dist-scenario`**
+
+必须是指向 `https://localhost:39100` 的包。`dist` 指向真实后端，跑不通。
+
+- 用**界面**导入，别用 `cli open`——该产物的 appid 是 `touristappid`，CLI 会报 `不存在此 AppID (code 10)`
+- 详情 → 本地设置 → 勾选**不校验合法域名/TLS/HTTPS 证书**（网关是自签证书，不勾请求全被挡）
+
+**3. 自动化会话**
+
+```bash
+/Applications/wechatwebdevtools.app/Contents/MacOS/cli auto --project <...>/dist-scenario --auto-port 9420
+```
+
+别重复起——多个会话抢同一端口会让行为变得不确定。
+
+### 验证
+
+```bash
+npm run smoke   # 只验 MCP 协议层，不需要开发者工具
+npm run live    # 验真实链路：连接、当前页、storage、web-view
+```
 
 ## 接进 Hercules
 
@@ -69,42 +89,39 @@ WXMP_PROOF_DIR=opt/proofs
 
 ## 登录
 
-抄 `login_profiles.example.json` 成 `login_profiles.json`（已 gitignore）：
+用 `mp_login_as('logged-in')`，不要去驱动登录界面——微信授权弹窗是原生 UI，自动化点不到。
 
-```json
-{
-  "vip_user": {
-    "storage": { "token": "...", "userId": "1001" },
-    "relaunch": "/pages/index/index"
-  }
-}
+登录态直接复用 e2e 的 fixture：
+
+```bash
+WXMP_FIXTURE_DEFAULTS=<miniapp>/fe_app/packages/e2e/tests/fixtures/base/defaults/defaults.json
 ```
 
-用例里写「以 vip_user 身份登录」，Agent 调 `mp_login_as("vip_user")`，本进程清空 storage → 写入该档案的键 → reLaunch。**返回值不回显凭据内容。**
+`mp_login_as` 照搬 `tests/utils/storage.ts` 的 `primeStorageFromFixture`：清空 storage → 写 `esm_tokens` 和 `esm_user`（两个都是**对象**，不是字符串）→ reLaunch 到首页。
 
-### 为什么必须走别名
+注意登录态**同时依赖 mock 网关**：只注入 storage 而网关没起，应用拿 token 去校验失败，照样回落到未登录。实测过，现象是「我的」页显示「登录/注册」而不是用户昵称。
 
-`test_data/` 的内容会被 `static_ltm.py` 注入每个 Agent 的 system prompt。也就是说写在那里的 token 会**发给 LLM 提供商**，并且**明文落进 `agent_inner_thoughts.json`**（那个文件存完整对话历史）。让模型直接传 token 也一样两头留痕。
-
-别名方案让敏感值从头到尾不进 LLM 上下文。即便如此，也请用短时效的专用测试账号。
+fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 
 ## 工具
 
 | 工具 | 用途 |
 | --- | --- |
-| `mp_navigate` | reLaunch / navigateTo / redirectTo / switchTab / navigateBack |
+| `mp_snapshot` | **看见页面**：可见文案 + 控件 + 可操作的 id |
+| `mp_navigate` | 命名路由跳转（login/home/chat/mine/…），自动选 switchTab 还是 reLaunch |
+| `mp_tap_text` | 按可见文案点击，对齐 getByText |
+| `mp_login_as` | `logged-in` / `guest` 前置态 |
 | `mp_current_page` | 当前路由与 query |
-| `mp_tap` / `mp_input` | 点击 / 输入 |
-| `mp_get_text` / `mp_element_exists` | 断言用 |
-| `mp_page_data` | dump 当前页 data |
-| `mp_call_method` | 调 Page 上的方法 |
-| `mp_login_as` | 按别名注入登录态 |
+| `mp_tap` / `mp_input` | 按选择器点击 / 输入（兜底） |
+| `mp_get_text` / `mp_element_exists` | 按选择器断言（兜底） |
+| `mp_page_data` / `mp_call_method` | 页面 data / 调 Page 方法 |
 | `mp_set_storage` / `mp_get_storage` / `mp_clear_storage` | storage 读写清 |
 | `mp_mock_wx` / `mp_restore_wx` | mock wx API |
-| `mp_wait` | 等选择器或固定毫秒 |
-| `mp_screenshot` | 截图存证 |
-| `mp_webview_url` | 读出 web-view 的 src，桥接到浏览器测试 |
+| `mp_wait` / `mp_screenshot` | 等待 / 截图存证 |
+| `mp_webview_url` | 读 web-view 的 src，桥接到浏览器测试 |
 | `mp_evaluate` | 逃生舱，逻辑层执行 JS |
+
+**优先用 `mp_snapshot` + `mp_tap_text` + 命名路由**，对齐 `fe_app/packages/e2e/tests/AGENTS.md` 的「像用户一样」原则：按可见文案和角色定位，不依赖 class/属性/顺序号。`mp_tap(selector)` 这类按选择器的工具是兜底，正常用例里不该出现。
 
 选择器是 **WXML 选择器**，不是浏览器 DOM 的 CSS 选择器。
 

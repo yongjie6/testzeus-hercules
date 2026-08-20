@@ -53,13 +53,18 @@ child.stdout.on("data", (chunk) => {
       });
     } else if (msg.id === 3) {
       const text = msg.result.content[0].text;
-      const clean = msg.result.isError && /DevTools/.test(text);
+      // DevTools may or may not be running. Either a real page or an
+      // actionable connection error is a pass; anything else is not.
+      const connected = !msg.result.isError && /path/.test(text);
+      const cleanError = msg.result.isError && /DevTools/.test(text);
       console.log(
-        clean
-          ? "error path ok: actionable message when DevTools is absent"
-          : `error path UNEXPECTED: ${text}`
+        connected
+          ? `tools/call ok: DevTools reachable, ${text}`
+          : cleanError
+            ? "tools/call ok: DevTools absent, actionable error returned"
+            : `tools/call UNEXPECTED: ${text}`
       );
-      if (!clean) failed = true;
+      if (!connected && !cleanError) failed = true;
       child.kill();
       process.exit(failed ? 1 : 0);
     }
