@@ -22,7 +22,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import automator from "miniprogram-automator";
 import { applyDevToolsCompat } from "./compat.mjs";
-import { parseWxml, formatSnapshot, findByText } from "./wxml.mjs";
+import { parseWxml, formatSnapshot, findByText, findInputs } from "./wxml.mjs";
 
 /**
  * Config comes from CLI flags first, environment second.
@@ -163,6 +163,32 @@ async function requireElement(selector) {
   return el;
 }
 
+/** Current page plus its parsed nodes; one round trip for the wxml. */
+async function readPage() {
+  const mp = await getMiniProgram();
+  const page = await mp.currentPage();
+  const root = await page.$("page");
+  if (!root) throw new Error(`Page ${page.path} exposed no root node.`);
+  return { page, nodes: parseWxml(await root.wxml()) };
+}
+
+/** Resolve the element showing `text`, or explain what is on screen instead. */
+async function elementShowing(text, exact = false) {
+  const { page, nodes } = await readPage();
+  const hits = findByText(nodes, text, exact);
+  if (!hits.length) {
+    const visible = nodes.filter((n) => n.text).map((n) => `"${n.text}"`);
+    throw new Error(
+      `No element showing "${text}" on ${page.path}. Visible text: ` +
+        (visible.length ? visible.join(", ") : "(none)")
+    );
+  }
+  const target = hits[0];
+  const el = await page.$(`#${target.id}`);
+  if (!el) throw new Error(`Element #${target.id} disappeared before it could be used.`);
+  return { page, el, target };
+}
+
 /* ------------------------------------------------------------------ *
  * Tool schemas
  *
@@ -224,6 +250,92 @@ const TOOLS = [
       },
       required: ["text"],
     },
+  },
+  {
+    name: "mp_input_text",
+    description:
+      "Type into an input or textarea. Identify the field the way a user would: " +
+      "pass `into` with its placeholder or the label next to it. If the page has " +
+      "exactly one input you may omit `into`. Run mp_snapshot first to see the " +
+      "fields and their placeholders.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to type" },
+        into: {
+          type: "string",
+          description: "Placeholder or nearby label of the target field",
+        },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "mp_trigger",
+    description:
+      "Fire a component event on the element showing this text, e.g. a custom " +
+      "event a component listens for. Use the ordinary tools first: mp_tap_text " +
+      "for taps, mp_input_text for typing, mp_swipe for gestures. This is for " +
+      "events those do not cover.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Visible text of the target element" },
+        event: {
+          type: "string",
+          description: "Event name without the bind prefix, e.g. longpress, change",
+        },
+        detail: { type: "object", description: "Event detail payload, optional" },
+      },
+      required: ["text", "event"],
+    },
+  },
+  {
+    name: "mp_swipe",
+    description:
+      "Swipe on the element showing this text, for gestures such as sliding a " +
+      "list row open. Mini programs have no real pointer, so this plays a touch " +
+      "sequence the component sees as a swipe.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Visible text of the element to swipe on" },
+        direction: {
+          type: "string",
+          enum: ["left", "right", "up", "down"],
+          description: "Swipe direction",
+        },
+        distance: {
+          type: "number",
+          description: "Pixels to travel, defaults to 80",
+        },
+      },
+      required: ["text", "direction"],
+    },
+  },
+  {
+    name: "mp_auth_phone",
+    description:
+      "Complete WeChat's phone number authorisation on the button showing this " +
+      "text. The real dialog is native and cannot be tapped, so this delivers " +
+      "the result the button's handler expects.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "Button text, e.g. 授权手机号快捷登录",
+        },
+        code: { type: "string", description: "Auth code to return, defaults to a test code" },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "mp_get_clipboard",
+    description:
+      "Read the clipboard, to assert on something the app copied for the user.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "mp_current_page",
@@ -510,6 +622,63 @@ const handlers = {
     return `Tapped ${target.tag} "${target.text}"`;
   },
 
+  async mp_input_text({ text, into = "" }) {
+    const { page, nodes } = await readPage();
+    const matches = findInputs(nodes, into);
+    if (!matches.length) {
+      const known = findInputs(nodes)
+        .map((n) => (n.placeholder ? `"${n.placeholder}"` : `<${n.tag}>`))
+        .join(", ");
+      throw new Error(
+        into
+          ? `No input matching "${into}" on ${page.path}. Inputs here: ${known || "(none)"}`
+          : `No input on ${page.path}.`
+      );
+    }
+    if (!into && matches.length > 1) {
+      const known = matches.map((n) => `"${n.placeholder || n.id}"`).join(", ");
+      throw new Error(
+        `${matches.length} inputs on ${page.path}; say which one via 'into'. Options: ${known}`
+      );
+    }
+    const target = matches[0];
+    const el = await page.$(`#${target.id}`);
+    if (!el) throw new Error(`Input #${target.id} disappeared before it could be filled.`);
+    await el.input(text);
+    return `Typed into ${target.placeholder ? `"${target.placeholder}"` : target.tag}`;
+  },
+
+  async mp_trigger({ text, event, detail = {} }) {
+    const { el, target } = await elementShowing(text);
+    await el.trigger(event, detail);
+    return `Fired ${event} on ${target.tag} "${target.text}"`;
+  },
+
+  async mp_swipe({ text, direction, distance = 80 }) {
+    const { el, target } = await elementShowing(text);
+    const axis = direction === "left" || direction === "right" ? "clientX" : "clientY";
+    const sign = direction === "left" || direction === "up" ? -1 : 1;
+    const start = { clientX: 0, clientY: 200 };
+    const end = { ...start, [axis]: start[axis] + sign * distance };
+    // Components read the gesture from the touch sequence, so all three fire.
+    await el.trigger("touchstart", { touches: [start] });
+    await el.trigger("touchmove", { touches: [end] });
+    await el.trigger("touchend", { touches: [end] });
+    return `Swiped ${direction} ${distance}px on "${target.text}"`;
+  },
+
+  async mp_auth_phone({ text, code = "wxmp-test-code" }) {
+    const { el, target } = await elementShowing(text);
+    await el.trigger("getphonenumber", { code });
+    return `Delivered phone authorisation to "${target.text}"`;
+  },
+
+  async mp_get_clipboard() {
+    const mp = await getMiniProgram();
+    const res = await mp.callWxMethod("getClipboardData");
+    return JSON.stringify(res?.data ?? res ?? null);
+  },
+
   async mp_current_page() {
     const mp = await getMiniProgram();
     const page = await mp.currentPage();
@@ -613,12 +782,14 @@ const handlers = {
 
   async mp_wait({ selector, ms }) {
     const mp = await getMiniProgram();
+    // waitFor lives on Page, not on MiniProgram, for both the selector and the
+    // millisecond form.
+    const page = await mp.currentPage();
     if (selector) {
-      const page = await mp.currentPage();
       await page.waitFor(selector);
       return `Waited for ${selector}`;
     }
-    await mp.waitFor(ms ?? 500);
+    await page.waitFor(ms ?? 500);
     return `Waited ${ms ?? 500}ms`;
   },
 

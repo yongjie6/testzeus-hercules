@@ -66,6 +66,10 @@ function finish(node, nodes) {
     disabled: node.attrs.disabled !== undefined,
     checked: node.attrs.checked !== undefined,
     src: node.attrs.src || null,
+    // Inputs rarely carry text of their own; the placeholder is what a person
+    // reads to know which field is which, so it is how we address them.
+    placeholder: node.attrs.placeholder || null,
+    value: node.attrs.value || null,
   });
 }
 
@@ -75,7 +79,7 @@ export function formatSnapshot(nodes) {
   const seen = new Set();
   const lines = [];
   for (const n of nodes) {
-    const key = `${n.tag}|${n.text}|${n.id}`;
+    const key = `${n.tag}|${n.text}|${n.id}|${n.placeholder}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const bits = [];
@@ -83,6 +87,8 @@ export function formatSnapshot(nodes) {
     if (n.testId) bits.push(`testId=${n.testId}`);
     if (n.disabled) bits.push("disabled");
     if (n.checked) bits.push("checked");
+    if (n.placeholder) bits.push(`placeholder="${n.placeholder}"`);
+    if (n.value) bits.push(`value="${n.value}"`);
     if (n.src) bits.push(`src=${n.src.slice(0, 60)}`);
     const suffix = bits.length ? `  [${bits.join(" ")}]` : "";
     lines.push(`${n.tag}${n.text ? ` "${n.text}"` : ""}${suffix}`);
@@ -96,4 +102,20 @@ export function findByText(nodes, needle, exact = false) {
   return nodes
     .filter((n) => n.id && n.text && (exact ? n.text === want : n.text.includes(want)))
     .sort((a, b) => a.text.length - b.text.length);
+}
+
+const INPUT_TAGS = new Set(["input", "textarea"]);
+
+/** Input-like elements, optionally narrowed by placeholder or nearby label. */
+export function findInputs(nodes, near = "") {
+  const inputs = nodes.filter((n) => n.id && INPUT_TAGS.has(n.tag));
+  if (!near) return inputs;
+  const want = near.trim();
+  const byPlaceholder = inputs.filter((n) => (n.placeholder || "").includes(want));
+  if (byPlaceholder.length) return byPlaceholder;
+  // Fall back to document order: the input that follows the label text.
+  const labelAt = nodes.findIndex((n) => n.text && n.text.includes(want));
+  if (labelAt === -1) return [];
+  const after = nodes.slice(labelAt).find((n) => n.id && INPUT_TAGS.has(n.tag));
+  return after ? [after] : [];
 }

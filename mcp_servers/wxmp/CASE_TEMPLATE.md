@@ -51,8 +51,13 @@ Feature: <模块名，对应原 TC 的分组>
 | 写法 | 对应 |
 | --- | --- |
 | `点击「退出登录」` | `mp_tap_text`，按可见文案 |
+| `在「昵称」输入「新名字」` | `mp_input_text`，按 placeholder 或旁边的标签定位 |
+| `输入「新名字」` | 同上；页面只有一个输入框时可省略字段名 |
+| `在「对话列表」上向左滑动` | `mp_swipe`，播放触摸序列 |
+| `完成手机号授权` | `mp_auth_phone`，绕过原生授权弹窗 |
 | `查看当前页面` | `mp_snapshot`，列出全部可见文案和控件 |
 | `截图记录<说明>` | `mp_screenshot`，存进 proofs |
+| `读取剪贴板` | `mp_get_clipboard` |
 
 ### 断言
 
@@ -102,14 +107,27 @@ Scenario: 退出登录后回到首页访客态
 
 注意最后一行的差别：原 TC 断言 URL（`toHaveURL`），Gherkin 里改成断言**页面上的可见文案**。Hercules 也能查当前路由，但断言用户看得见的东西更贴近"像用户一样"。
 
-### TC-USER-002 —— 现在转不了
+### TC-USER-002 —— 直接可转
 
 ```ts
+await page.getByText('Neo').click()
 await page.getByRole('textbox').fill(newNickname)
 await page.getByRole('button', { name: '保存' }).click()
+await expect(page.getByText('昵称已更新')).toBeVisible()
 ```
 
-缺 `getByRole('textbox').fill()` 的等价物。现有的 `mp_input` 需要 WXML 选择器，而选择器是这份规范明令禁止的。**见下方缺口清单。**
+```gherkin
+Scenario: 修改昵称后展示新昵称
+  Given 以 logged-in 状态进入小程序
+  When 跳转到「我的」页面
+  And 点击「Neo」
+  And 输入「TC-USER-002-新昵称」
+  And 点击「保存」
+  Then 应该看到「昵称已更新」
+  And 应该看到「TC-USER-002-新昵称」
+```
+
+该页只有一个输入框，所以省略了字段名。页面有多个输入框时写成 `在「昵称」输入「...」`，用 placeholder 或旁边的标签指明。
 
 ## 红线
 
@@ -123,19 +141,15 @@ await page.getByRole('button', { name: '保存' }).click()
 | `调用 xxx 接口` / `检查 storage` | 只断言 UI，不查接口/存储，对应原 TC 的"禁止非 UI 证据" |
 | 一条 Scenario 里塞多个验证点 | Hercules 按 Scenario 拆分执行，粒度粗了定位不到问题 |
 
-## 当前转换不了的（工具缺口）
+## 当前转换不了的
 
-从你们现有 TC 里筛出来的，转换前需要先补工具：
+大部分缺口已补齐。仍然没有对应能力的：
 
-| 缺口 | 影响的 TC 模式 | 现状 |
-| --- | --- | --- |
-| **按语义输入文本** | `getByRole('textbox').fill()`，如 TC-USER-002 改昵称 | `mp_input` 只收选择器，不可用 |
-| **手势** | `dispatchEvent('touchstart'/'touchmove'/'touchend')`，如 TC-CHATLIST-001 侧滑 | 完全没有对应工具 |
-| **触发自定义事件** | `locator.dispatchEvent(type, detail)` | 无 |
-| **手机号授权** | `btn.triggerGetPhoneNumber({ code })` | 无，需要专门包一层 |
-| **剪贴板断言** | `toHaveClipboardText()` | 无 |
-
-建议**先转能转的**（纯浏览 + 点击 + 文案断言那一类，占比应该不低），把需要上述能力的挑出来单独列一批，补完工具再转。
+| 缺口 | 影响 |
+| --- | --- |
+| **web-view 内的 H5** | MCP 够不到内嵌浏览器上下文。用 `mp_webview_url` 读出地址再交给浏览器工具，见 README |
+| **原生弹窗** | 支付、订阅消息等；`mp_mock_wx` 能绕开一部分，无法真正交互 |
+| **精确坐标手势** | `mp_swipe` 用固定起点播放触摸序列，依赖精确坐标的组件可能不生效 |
 
 ## 转换前的检查清单
 
