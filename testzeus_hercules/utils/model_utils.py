@@ -45,16 +45,26 @@ def adapt_llm_params_for_model(model_name: str, llm_config: Dict[str, Any]) -> D
             params["max_completion_tokens"] = 4096
 
     elif model_name.startswith(("claude", "anthropic")):
-        # Claude models use max_tokens_to_sample
-        if "max_tokens" in params and "max_tokens_to_sample" not in params:
-            params["max_tokens_to_sample"] = params.pop("max_tokens")
+        # max_tokens_to_sample belongs to Anthropic's legacy completions API.
+        # create_chat_model only ever builds a ChatOpenAI, so a Claude model is
+        # reached through an OpenAI-compatible endpoint, and that endpoint takes
+        # max_tokens. Sending the legacy name gets it passed through as an
+        # unknown kwarg and the request dies with a TypeError before it leaves
+        # the process. Translate in the other direction, and repair a config
+        # that already carries the legacy name.
+        if "max_tokens_to_sample" in params and "max_tokens" not in params:
+            params["max_tokens"] = params.pop("max_tokens_to_sample")
             logger.warning(
-                "Deprecated param 'max_tokens' supplied for %s; auto-translating to 'max_tokens_to_sample'.",
+                "'max_tokens_to_sample' supplied for %s; that is the legacy completions "
+                "parameter. Using 'max_tokens', which is what a chat endpoint accepts.",
                 model_name,
             )
+        params.pop("max_tokens_to_sample", None)
+        if "max_completion_tokens" in params and "max_tokens" not in params:
+            params["max_tokens"] = params.pop("max_completion_tokens")
         # Set default if neither is present
-        if "max_tokens_to_sample" not in params:
-            params["max_tokens_to_sample"] = 4096
+        if "max_tokens" not in params:
+            params["max_tokens"] = 4096
 
     else:
         # Other models use max_tokens
