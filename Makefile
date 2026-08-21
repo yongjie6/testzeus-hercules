@@ -34,6 +34,10 @@ lint: fmt             ## Run pep8, black, mypy linters.
 	uv run black --target-version py311 -l 200 --check testzeus_hercules/
 	uv run black --target-version py311 -l 200 --check tests/
 	# uv run mypy --ignore-missing-imports testzeus_hercules/
+
+.PHONY: lint-gherkin
+lint-gherkin:      ## Report non-standard .feature files. Informational only — never fails the build.
+	uv run python helper_scripts/lint_gherkin.py
 	
 .PHONY: test
 test: lint        ## Run tests and generate coverage report.

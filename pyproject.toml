@@ -55,6 +55,10 @@ dependencies = [
     "cryptography>=48.0.1,<49",
     "anthropic>=0.87.0",
     "python-multipart>=0.0.26",
+    "jsonschema>=4.18.0,<5",
+    "tenacity>=8.2.0,<10",
+    "jsonpath-ng>=1.6.0,<2",
+    "openapi-schema-validator>=0.6.0,<1",
     "standard-aifc>=3.13.0,<4 ; python_full_version >= '3.13'",
     "audioop-lts>=0.2.2,<1 ; python_full_version >= '3.13'",
 ]
@@ -82,6 +86,7 @@ dev = [
     "twine>=5.1.1,<6",
     "deptry>=0.21.0,<0.22",
     "pytest-rerunfailures>=15.0,<16",
+    "gherkin-official>=24.1.0,<43",
 ]
 
 [tool.setuptools]

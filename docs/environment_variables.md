@@ -358,6 +358,13 @@ LLM Parameters:
   - Default: `30.0`
   - Implementation: Controls how long Portkey waits for a response before timing out
 
+### API Tools
+- `API_REQUEST_TIMEOUT`: HTTP timeout in seconds for the API nav agent's `generic_http_api` tool
+  - Default: `30`
+  - Implementation: Passed to `httpx.Timeout` on every API call. Invalid or non-positive
+    values fall back to the default. On expiry the tool returns
+    `status_type: "timeout"` with the configured limit named in the error.
+
 ### MCP Integration
 - `MCP_ENABLED`: Enable MCP integration
   - Values: `true`, `false`

@@ -245,7 +245,7 @@ testzeus-hercules \
 >
 > 完整的 planner 决策记录：每一步的 `plan`、`next_step`、派给了哪个执行 Agent（`target_helper`）、助手回了什么、以及最终的 `is_passed` 与 `assert_summary`。绝大多数"为什么它没点那个按钮"的问题，答案都在这个文件里。
 
-另外 `proofs/` 下还会按需生成 `api_logs.log`、`security_logs.log`、`accessibility_logs.csv`，分别对应接口测试、安全扫描和无障碍检查的产出。
+另外 `proofs/` 下还会按需生成 `api_logs.log`、`security_logs.log`、`accessibility_logs.csv`，分别对应接口测试、安全扫描和无障碍检查的产出。接口请求的超时用 `API_REQUEST_TIMEOUT` 控制，默认 30 秒。
 
 ---
 
@@ -357,6 +357,10 @@ GEO_API_KEY=your_key
 ```
 
 设备名取自 [Playwright 设备描述符列表](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/deviceDescriptorsSource.json)。
+
+### API 测试
+
+接口测试走两条路：`.feature` 里用自然语言描述、由 `api_nav_agent` 现场调用断言工具判定，适合探索性用例；契约已经稳定的回归用例写成 `.hurl`，断言写死，跑起来不需要 LLM key。断言/契约校验/取值/回归执行的完整工具清单和取舍判据见 [api_testing.md](api_testing.md)，Hurl 那条路的细节见 [api_testing_hurl.md](api_testing_hurl.md)。
 
 ### 安全与无障碍
 

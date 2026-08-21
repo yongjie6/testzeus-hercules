@@ -10,11 +10,10 @@ from testzeus_hercules.utils.logger import logger
 
 class BrowserLogger:
     """
-    A logger class for tracking interactions across different navigation agents:
-    - browser_nav_agent: Browser interactions
-    - api_nav_agent: API calls and responses
-    - sec_nav_agent: Security testing operations
-    - sql_nav_agent: Database operations
+    A logger class for tracking browser_nav_agent interactions (log_browser_interaction,
+    log_selector_interaction). api_nav_agent/sec_nav_agent/sql_nav_agent each keep their
+    own flat log files instead (api_logs.log, security_logs.log) — see api_calls.py's and
+    api_sec_calls.py's file_logger — rather than going through this NDJSON log.
 
     Logs are stored in NDJSON format (Newline Delimited JSON).
     """
@@ -151,83 +150,6 @@ class BrowserLogger:
             selector_type=selector_type,
             alternative_selectors=alternative_selectors,
             element_attributes=element_attributes,
-            success=success,
-            error_message=error_message,
-            additional_data=additional_data,
-        )
-
-    async def log_api_interaction(
-        self,
-        tool_name: str,
-        action: str,
-        intent: str,
-        request_data: Dict[str, Any],
-        response_data: Optional[Dict[str, Any]] = None,
-        success: bool = True,
-        error_message: Optional[str] = None,
-        additional_data: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Log an API interaction."""
-        await self.log_interaction(
-            agent_type="api_nav_agent",
-            tool_name=tool_name,
-            action=action,
-            interaction_type="api",
-            intent=intent,
-            request_data=request_data,
-            response_data=response_data,
-            success=success,
-            error_message=error_message,
-            additional_data=additional_data,
-        )
-
-    async def log_security_interaction(
-        self,
-        tool_name: str,
-        action: str,
-        intent: str,
-        test_type: str,
-        target: str,
-        findings: Optional[Dict[str, Any]] = None,
-        success: bool = True,
-        error_message: Optional[str] = None,
-        additional_data: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Log a security testing interaction."""
-        await self.log_interaction(
-            agent_type="sec_nav_agent",
-            tool_name=tool_name,
-            action=action,
-            interaction_type="security",
-            intent=intent,
-            request_data={"test_type": test_type, "target": target},
-            response_data=findings,
-            success=success,
-            error_message=error_message,
-            additional_data=additional_data,
-        )
-
-    async def log_sql_interaction(
-        self,
-        tool_name: str,
-        action: str,
-        intent: str,
-        query: str,
-        parameters: Optional[Dict[str, Any]] = None,
-        result: Optional[Any] = None,
-        success: bool = True,
-        error_message: Optional[str] = None,
-        additional_data: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Log a SQL interaction."""
-        await self.log_interaction(
-            agent_type="sql_nav_agent",
-            tool_name=tool_name,
-            action=action,
-            interaction_type="sql",
-            intent=intent,
-            request_data={"query": query, "parameters": parameters},
-            response_data={"result": result} if result is not None else None,
             success=success,
             error_message=error_message,
             additional_data=additional_data,

@@ -9,6 +9,7 @@ on:
 
 env:
   UV_VERSION: "0.4.29"
+  HURL_VERSION: "8.0.1"
 
 jobs:
   linter_tester:
@@ -54,3 +55,69 @@ jobs:
       #   with:
       #     fail_ci_if_error: true
       #     token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Covers the API tool suite (assertions, variable interpolation, schema/OpenAPI
+  # validation, Hurl regression) plus the Hurl control-group against a locally-started
+  # target app. Needs no LLM key, unlike main-test.yml/non-main-test.yml, so it runs
+  # unconditionally on every push/PR rather than being workflow_dispatch-gated.
+  api_tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.11]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+        id: setup_python
+      - name: Cache UV cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/uv
+          key: uv-cache-${{ runner.os }}-${{ steps.setup_python.outputs.python-version }}-${{ env.UV_VERSION }}
+      - name: Install UV ${{ env.UV_VERSION }}
+        run: |
+          pip install uv==${{ env.UV_VERSION }}
+      - name: Install project (base deps only — no browser/ML extras needed here)
+        run: uv sync
+      - name: Install hurl ${{ env.HURL_VERSION }}
+        run: |
+          set -euo pipefail
+          asset="hurl-${HURL_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSLO "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/${asset}"
+          checksum="$(curl -sSL "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/${asset}.sha256")"
+          # The published .sha256 file holds only the hash, no filename column, so
+          # sha256sum -c needs that reconstructed rather than checking the file as-is.
+          echo "${checksum}  ${asset}" | sha256sum -c -
+          tar xzf "${asset}"
+          sudo mv "hurl-${HURL_VERSION}-x86_64-unknown-linux-gnu/bin/hurl" /usr/local/bin/hurl
+          hurl --version
+      - name: Run API tool tests (no LLM key needed)
+        run: uv run pytest -v tests/ --ignore=tests/test_feature_execution.py
+      - name: Start the local API testing app
+        run: |
+          set -euo pipefail
+          uv run --isolated --with-requirements tests/api_testing_app/requirements.txt python tests/api_testing_app/main.py &
+          for i in $(seq 1 15); do
+            curl -sf http://127.0.0.1:8000/openapi.json > /dev/null && exit 0
+            sleep 1
+          done
+          echo "target app did not come up in time" >&2
+          exit 1
+      - name: Run the Hurl control-group suite (no LLM key needed)
+        run: |
+          hurl --test --report-junit hurl-report.xml \
+            --variable server=http://127.0.0.1:8000/ \
+            --variable username=user@example.com \
+            --variable password=user@example.com \
+            --variable run_id=${{ github.run_id }} \
+            tests/test_not_for_ci/ApiTestingNew/hurl/*.hurl
+      - name: Upload Hurl JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hurl-report
+          path: hurl-report.xml

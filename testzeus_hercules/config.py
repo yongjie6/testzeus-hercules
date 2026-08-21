@@ -584,6 +584,8 @@ class BaseConfigManager:
             "MCP_SERVERS",
             "MCP_ENABLED",
             "MCP_TIMEOUT",
+            # API tool configuration
+            "API_REQUEST_TIMEOUT",
             # Python Sandbox configuration
             "SANDBOX_TENANT_ID",
             "SANDBOX_PACKAGES",
@@ -751,6 +753,9 @@ class BaseConfigManager:
         self._config.setdefault("MCP_ENABLED", "false")
         self._config.setdefault("MCP_TIMEOUT", "30")
         self._config.setdefault("MCP_SERVERS", "{}")
+
+        # API tool defaults
+        self._config.setdefault("API_REQUEST_TIMEOUT", "30")
 
         # Python Sandbox defaults
         self._config.setdefault("SANDBOX_TENANT_ID", "")  # No default tenant
@@ -1174,6 +1179,21 @@ class BaseConfigManager:
     def get_mcp_timeout(self) -> int:
         """Get MCP connection timeout in seconds."""
         return int(self._config.get("MCP_TIMEOUT", "30"))
+
+    def get_api_request_timeout(self) -> float:
+        """Get the HTTP timeout, in seconds, used by the API nav agent tools."""
+        raw = self._config.get("API_REQUEST_TIMEOUT", "30")
+        try:
+            timeout = float(raw)
+        except (TypeError, ValueError):
+            logger.warning("Invalid API_REQUEST_TIMEOUT %r, falling back to 30s", raw)
+            return 30.0
+        if timeout <= 0:
+            logger.warning(
+                "API_REQUEST_TIMEOUT must be positive, got %r, falling back to 30s", raw
+            )
+            return 30.0
+        return timeout
 
     def get_mcp_servers(self) -> dict:
         """Get MCP servers configuration."""

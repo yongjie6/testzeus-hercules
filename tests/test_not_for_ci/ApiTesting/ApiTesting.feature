@@ -38,7 +38,6 @@ Feature: End-to-End Pet Store Flow Validation
 
     Examples:
       | storedPetId | updatedName  | updatedStatus |
-      |-------------|--------------|---------------|
       | 1           | Bulldog Plus | sold          |
 
   Scenario Outline: Delete a Pet
@@ -49,7 +48,6 @@ Feature: End-to-End Pet Store Flow Validation
 
     Examples:
       | storedPetId |
-      |-------------|
       | 2           |
 
   Scenario: Complete Pet Store Management Flow
