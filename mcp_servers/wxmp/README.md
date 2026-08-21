@@ -26,6 +26,15 @@ cd <miniapp>/fe_app/packages/e2e && ./node_modules/.bin/tsx <此目录>/gateway.
 
 端口 39100/39101 是**编译进小程序包里的**，不能改。`gateway.mts` 用的是 e2e 那套 `startGateway` + `loadMergedFixture`，只是常驻运行——他们的 `test-env.ts` 每次 vitest 跑完就拆掉网关，那个生命周期和 Hercules 对不上。
 
+常驻也意味着它得能换数据：vitest 那边每条 TC 起一个新网关来加载自己的 fixture，这里换不了进程，所以 `gateway.mts` 另开一个控制端口（默认 39102，`GATEWAY_CTRL_PORT`）就地换：
+
+```bash
+curl -s http://127.0.0.1:39102/fixture                              # 当前场景 + 全部可选场景
+curl -sX POST http://127.0.0.1:39102/fixture -d '{"scene":"TC-QUOTA-001"}'
+```
+
+`mp_use_fixture` 调的就是它。场景名写错会直接报错并列出可选值，不会静默退回 base。控制端口只监听 127.0.0.1。
+
 **2. 开发者工具打开 `dist-scenario`**
 
 必须是指向 `https://localhost:39100` 的包。`dist` 指向真实后端，跑不通。
@@ -72,7 +81,8 @@ MCP_SERVERS=mcp_servers.json
 MCP_TIMEOUT=30
 
 WXMP_WS_ENDPOINT=ws://localhost:9420
-WXMP_LOGIN_PROFILES=mcp_servers/wxmp/login_profiles.json
+WXMP_FIXTURE_DEFAULTS=<miniapp>/fe_app/packages/e2e/tests/fixtures/base/defaults/defaults.json
+WXMP_GATEWAY_CONTROL=http://127.0.0.1:39102
 WXMP_PROOF_DIR=opt/proofs
 ```
 
@@ -83,9 +93,13 @@ WXMP_PROOF_DIR=opt/proofs
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `WXMP_WS_ENDPOINT` | `ws://localhost:9420` | 开发者工具自动化端口 |
-| `WXMP_LOGIN_PROFILES` | — | 登录档案：JSON 文件路径，或内联 JSON |
+| `WXMP_FIXTURE_DEFAULTS` | — | fixture defaults：JSON 文件路径，或内联 JSON。`mp_login_as` 照它种登录态 |
+| `WXMP_GATEWAY_CONTROL` | `http://127.0.0.1:39102` | mock 网关的控制端口，`mp_use_fixture` 用 |
 | `WXMP_PROOF_DIR` | cwd | 截图落盘目录，指到 Hercules 的 proofs 下 |
 | `WXMP_CONNECT_TIMEOUT` | `30000` | 连接超时（毫秒） |
+| `WXMP_AUTO_SCREENSHOT` | `on` | 每个改变画面的动作后自动截图，`off` 关掉 |
+
+对应的 CLI flag 同名去掉前缀：`--fixture` / `--gateway-control` / `--endpoint` / `--proof-dir` / `--auto-screenshot`。**flag 优先**——MCP 的 stdio 边界不传环境变量，接进 Hercules 时只能用 flag。
 
 ## 登录
 
@@ -111,6 +125,10 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 | `mp_navigate` | 命名路由跳转（login/home/chat/mine/…），自动选 switchTab 还是 reLaunch |
 | `mp_tap_text` | 按可见文案点击，对齐 getByText |
 | `mp_login_as` | `logged-in` / `guest` 前置态 |
+| `mp_use_fixture` | 换后端数据场景（额度用尽、token 过期、接口报错…），**要在 `mp_login_as` 之前调** |
+| `mp_swipe` | 手势，带 `until` 会重试到目标文案出现 |
+| `mp_long_press` | 按住不放，`duration` 控制时长（微信 350ms 起算长按），`until` 同上 |
+| `mp_trigger` | 发组件事件；输入框用 `into`（placeholder）定位，它自己没有文案 |
 | `mp_current_page` | 当前路由与 query |
 | `mp_tap` / `mp_input` | 按选择器点击 / 输入（兜底） |
 | `mp_get_text` / `mp_element_exists` | 按选择器断言（兜底） |

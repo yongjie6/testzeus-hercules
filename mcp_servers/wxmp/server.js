@@ -45,6 +45,13 @@ const WS_ENDPOINT = flag("endpoint", process.env.WXMP_WS_ENDPOINT || "ws://local
 const PROOF_DIR = flag("proof-dir", process.env.WXMP_PROOF_DIR || process.cwd());
 const CONNECT_TIMEOUT = Number(flag("connect-timeout", process.env.WXMP_CONNECT_TIMEOUT || 30000));
 const FIXTURE_DEFAULTS = flag("fixture", process.env.WXMP_FIXTURE_DEFAULTS || "");
+// The mock gateway is long-lived here (gateway.mts), so a case cannot get a
+// different account state by restarting it the way the vitest suite does.
+// Its control port swaps the fixture in place instead; mp_use_fixture calls it.
+const GATEWAY_CONTROL = flag(
+  "gateway-control",
+  process.env.WXMP_GATEWAY_CONTROL || "http://127.0.0.1:39102"
+);
 // Browser runs get a screenshot per step from PlaywrightManager; mini program
 // runs had evidence only when a case asked for it, so reports came back with
 // nothing to look at. Capture around actions here instead, which keeps the
@@ -61,6 +68,7 @@ const CAPTURED = new Set([
   "mp_input",
   "mp_swipe",
   "mp_trigger",
+  "mp_long_press",
   "mp_auth_phone",
 ]);
 
@@ -144,6 +152,9 @@ function resolveRoute(input) {
 // gesture until it reads as a slow pan instead of a swipe.
 const SWIPE_STEPS = 5;
 const SWIPE_ATTEMPTS = 4;
+// A held touch is as unreliable as a dragged one: the same hold lands as a
+// long press on one run and as a plain tap on the next, so it retries too.
+const PRESS_ATTEMPTS = 4;
 
 const TOKENS_KEY = "esm_tokens";
 const USER_KEY = "esm_user";
@@ -174,7 +185,10 @@ function loadFixtureDefaults() {
   }
 }
 
-const FIXTURE = loadFixtureDefaults();
+// Reassigned by mp_use_fixture: a scene can override the user the login state
+// is seeded from, and seeding a base user against a scene's backend data is
+// exactly the kind of mismatch that fails far away from its cause.
+let FIXTURE = loadFixtureDefaults();
 
 /* ------------------------------------------------------------------ *
  * Connection (lazy singleton)
@@ -241,6 +255,39 @@ async function elementShowing(text, exact = false) {
   if (!el) throw new Error(`Element #${target.id} disappeared before it could be used.`);
   return { page, el, target };
 }
+
+/**
+ * Resolve a target by visible text, or -- for a field that has none -- by its
+ * placeholder. Inputs are the one control a user reads by placeholder rather
+ * than by text, so events aimed at them (blur, focus) were unreachable while
+ * text was the only way to name a target.
+ */
+async function elementTarget({ text, into }) {
+  if (text) return elementShowing(text);
+  const { page, nodes } = await readPage();
+  const matches = findInputs(nodes, into || "");
+  if (!matches.length) {
+    const known = findInputs(nodes)
+      .map((n) => (n.placeholder ? `"${n.placeholder}"` : `<${n.tag}>`))
+      .join(", ");
+    throw new Error(
+      `No input matching "${into}" on ${page.path}. Inputs here: ${known || "(none)"}`
+    );
+  }
+  if (!into && matches.length > 1) {
+    const known = matches.map((n) => `"${n.placeholder || n.id}"`).join(", ");
+    throw new Error(
+      `${matches.length} inputs on ${page.path}; say which one via 'into'. Options: ${known}`
+    );
+  }
+  const target = matches[0];
+  const el = await page.$(`#${target.id}`);
+  if (!el) throw new Error(`Input #${target.id} disappeared before it could be used.`);
+  return { page, el, target };
+}
+
+const describeTarget = (target) =>
+  target.text || target.label || (target.placeholder ? `"${target.placeholder}"` : target.tag);
 
 /* ------------------------------------------------------------------ *
  * Tool schemas
@@ -328,21 +375,77 @@ const TOOLS = [
   {
     name: "mp_trigger",
     description:
-      "Fire a component event on the element showing this text, e.g. a custom " +
-      "event a component listens for. Use the ordinary tools first: mp_tap_text " +
-      "for taps, mp_input_text for typing, mp_swipe for gestures. This is for " +
-      "events those do not cover.",
+      "Fire a component event on an element, e.g. a custom event a component " +
+      "listens for, or blur on a field to dismiss the keyboard. Name the target " +
+      "with `text` when it shows text, or with `into` (its placeholder) when it " +
+      "is an input, which shows none. Use the ordinary tools first: mp_tap_text " +
+      "for taps, mp_input_text for typing, mp_swipe for gestures, mp_long_press " +
+      "for a press-and-hold. This is for events those do not cover.",
     inputSchema: {
       type: "object",
       properties: {
         text: { type: "string", description: "Visible text of the target element" },
+        into: {
+          type: "string",
+          description:
+            "Placeholder of the target input, for fields that show no text of " +
+            "their own. Give this or `text`.",
+        },
         event: {
           type: "string",
-          description: "Event name without the bind prefix, e.g. longpress, change",
+          description: "Event name without the bind prefix, e.g. blur, focus, change",
         },
         detail: { type: "object", description: "Event detail payload, optional" },
       },
-      required: ["text", "event"],
+      required: ["event"],
+    },
+  },
+  {
+    name: "mp_long_press",
+    description:
+      "Press and hold the element showing this text, for menus and actions " +
+      "bound to a long press. This holds the touch for real time rather than " +
+      "announcing the event, so a component that decides on duration sees what " +
+      "a finger would. WeChat's own longpress fires at 350ms, so a hold shorter " +
+      "than that is how you check a press is NOT treated as a long one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Visible text of the target element" },
+        duration: {
+          type: "number",
+          description: "Milliseconds to hold, defaults to 400 (WeChat fires at 350)",
+        },
+        until: {
+          type: "string",
+          description:
+            "Text the press is meant to reveal, e.g. '重命名'. Strongly " +
+            "recommended: the same hold lands as a long press on one run and " +
+            "as a tap on the next, and with this the press is repeated until " +
+            "the text appears. Leave it off only when checking that a SHORT " +
+            "hold is not treated as a long press.",
+        },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "mp_use_fixture",
+    description:
+      "Switch the backend data the app talks to, by naming a fixture scene such " +
+      "as 'TC-AUTH-004' or 'base'. Use this when a case needs an account or " +
+      "server state the default data does not have -- an expired token, an empty " +
+      "list, a quota that is used up, an error response. Call it BEFORE " +
+      "mp_login_as, because the login state is seeded from the scene's data. " +
+      "With no argument it reports the current scene and every scene available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scene: {
+          type: "string",
+          description: "Fixture scene name; omit to just report what is loaded",
+        },
+      },
     },
   },
   {
@@ -725,10 +828,85 @@ const handlers = {
     return `Typed into ${target.placeholder ? `"${target.placeholder}"` : target.tag}`;
   },
 
-  async mp_trigger({ text, event, detail = {} }) {
-    const { el, target } = await elementShowing(text);
+  async mp_trigger({ text, into, event, detail = {} }) {
+    if (!text && !into) {
+      throw new Error("Name the target with 'text', or with 'into' for an input.");
+    }
+    const { el, target } = await elementTarget({ text, into });
     await el.trigger(event, detail);
-    return `Fired ${event} on ${target.tag} "${target.text || target.label}"`;
+    return `Fired ${event} on ${target.tag} ${describeTarget(target)}`;
+  },
+
+  async mp_long_press({ text, duration = 400, until }) {
+    // Element.longpress() holds for a fixed 350ms, which cannot say whether a
+    // shorter press is rejected. Playing the hold ourselves keeps the duration
+    // in the case, where the threshold being tested belongs.
+    const hold = async () => {
+      const { el, target } = await elementShowing(text);
+      await el.touchstart();
+      await new Promise((resolve) => setTimeout(resolve, duration));
+      await el.touchend();
+      return target;
+    };
+    const seen = async (needle) => {
+      const { nodes } = await readPage();
+      return nodes.some((n) => (n.text && n.text.includes(needle)) || (n.label && n.label.includes(needle)));
+    };
+
+    if (!until) {
+      const target = await hold();
+      return `Held ${describeTarget(target)} for ${duration}ms`;
+    }
+
+    let target;
+    for (let attempt = 1; attempt <= PRESS_ATTEMPTS; attempt++) {
+      target = await hold();
+      if (await seen(until)) {
+        return (
+          `Held ${describeTarget(target)} for ${duration}ms; "${until}" is now showing` +
+          (attempt > 1 ? ` (took ${attempt} attempts)` : "")
+        );
+      }
+    }
+    throw new Error(
+      `Held ${describeTarget(target)} for ${duration}ms ${PRESS_ATTEMPTS} times but ` +
+        `"${until}" never appeared. Either the press is not what this component ` +
+        "listens for, the hold is too short to count as a long press (WeChat " +
+        "fires at 350ms), or the expected text is wrong."
+    );
+  },
+
+  async mp_use_fixture({ scene } = {}) {
+    const url = `${GATEWAY_CONTROL.replace(/\/$/, "")}/fixture`;
+    let res;
+    try {
+      res = scene
+        ? await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ scene }),
+          })
+        : await fetch(url);
+    } catch (err) {
+      throw new Error(
+        `Could not reach the gateway control port at ${url} (${err.message}). ` +
+          "The mock gateway has to be running with a control port: start it with " +
+          "gateway.mts, which opens 39102 by default."
+      );
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.ok === false) {
+      throw new Error(body.error || `Gateway refused the fixture switch (${res.status}).`);
+    }
+    if (!scene) {
+      return `Fixture scene "${body.scene}". Available: ${(body.scenes ?? []).join(", ")}`;
+    }
+    // The scene can redefine the user that mp_login_as seeds storage from.
+    if (body.defaults && Object.keys(body.defaults).length) FIXTURE = body.defaults;
+    return (
+      `Backend data is now scene "${body.scene}". Set the login state after this, ` +
+      "not before, so it is seeded from this scene."
+    );
   },
 
   async mp_swipe({ text, selector, direction, distance = 80, until }) {
@@ -754,8 +932,15 @@ const handlers = {
     const sign = direction === "left" || direction === "up" ? -1 : 1;
 
     const play = async (el) => {
+      // Travel always runs through non-negative coordinates: a right swipe
+      // starts at the edge and moves in, a left swipe starts `distance` in and
+      // moves out to the edge. Signing off a fixed 0 origin instead sends
+      // clientX: -80 for left and up, which no real touch ever produces, and
+      // handlers that read the start point (the drawer gesture wants
+      // startX < 40) then see something impossible.
+      const origin = sign < 0 ? distance : 0;
       const at = (travelled) => {
-        const point = { clientX: 0, clientY: 200, [axis]: sign * travelled };
+        const point = { clientX: 0, clientY: 200, [axis]: origin + sign * travelled };
         // Components read touchend off changedTouches, and automator's real
         // touch methods produce a truer event than the generic trigger();
         // smart-page.ts does both and the gesture does not register without it.
