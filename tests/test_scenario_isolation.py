@@ -109,7 +109,9 @@ def test_healthy_scenarios_keep_their_own_result(captured) -> None:
     assert ok.get("is_passed") is True
 
 
-def test_the_report_actually_marks_the_aborted_scenario_failed(captured, tmp_path) -> None:
+def test_the_report_actually_marks_the_aborted_scenario_failed(
+    captured, tmp_path, monkeypatch
+) -> None:
     """The dict saying is_passed=False is not enough; JUnit has to agree.
 
     build_junit_xml only consults is_passed when is_assert is set, and
@@ -119,7 +121,20 @@ def test_the_report_actually_marks_the_aborted_scenario_failed(captured, tmp_pat
     """
     from junitparser import Failure
 
+    from testzeus_hercules.utils import junit_helper
     from testzeus_hercules.utils.junit_helper import JUnitXMLGenerator
+
+    # The generator emits a telemetry event on the assertion branch, and other
+    # tests in the suite swap out EventType, so reaching it here depends on what
+    # ran first. EventType.ASSERT is evaluated as an argument, before add_event
+    # is even called, so both have to be stubbed. The verdict is what this test
+    # is about, not the event.
+    class _Event:
+        ASSERT = "assert"
+
+    monkeypatch.setattr(junit_helper, "EventType", _Event, raising=False)
+    monkeypatch.setattr(junit_helper, "EventData", lambda **k: None, raising=False)
+    monkeypatch.setattr(junit_helper, "add_event", lambda *a, **k: None, raising=False)
 
     failed = next(e for e in captured if e["scenario"] == "boom")["result"]
     blank = str(tmp_path)
