@@ -155,9 +155,20 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 `--vision-key`（MCP stdio 不透传环境变量，只能走参数），`mp_visual_compare` 另需
 `--baseline-dir`。没配就直接报错，不会静默降级。
 
+**test_data 里必须写死路由，否则视觉断言会被派给浏览器。** planner 的能力表把
+「visual validation」归在 browser helper 名下（`high_level_planner_agent.py` 的
+Helper Capabilities），所以一条「在截图上确认…」的步骤即使前两步都走了 MCP，到
+断言那步也会切到 browser——浏览器截到的是空白页，用例报「无法获取截图」。
+实测同一条用例在两次运行里一次走 MCP 一次走 browser。test_data 里点名反驳那条
+能力表之后，路由才稳定。
+
 **默认还是用快照。** 每次视觉调用要传约 240KB 图片，判定来自模型对画面的描述，
 天然比文案匹配模糊。只在判定对象本身是视觉性的时候用，问题也要问具体——
 「底部导航栏有哪几个标签」可靠，「导航栏正常吗」不可靠。
+
+`--proof-dir` 支持 `${proof_path}` 占位符，展开成 Hercules 当前这条用例的
+`proofs/<用例名>/<run>/`，证据按用例分开存。写死一个固定目录的话，所有轮次的截图
+会堆在一起，事后分不清哪张属于哪条。
 
 基准图不会自动生成：首次调用 `mp_visual_compare` 会存一张 `<名字>.candidate.png`
 然后失败，人看过确认没问题、手动改名成 `<名字>.png` 才算数。自动采纳的话，

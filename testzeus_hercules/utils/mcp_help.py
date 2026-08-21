@@ -14,7 +14,7 @@ import httpx
 from langchain_core.tools import StructuredTool
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
-from mcp.client.stdio import stdio_client
+from mcp.client.stdio import get_default_environment, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from testzeus_hercules.config import get_global_conf
 from testzeus_hercules.utils.langchain_tools import merge_tools
@@ -247,6 +247,34 @@ class MCPHelper:
             logger.error(f"Error getting resource '{resource_uri}' from MCP server '{server_name}': {e}")
             return {"success": False, "error": str(e), "server": server_name}
 
+    @staticmethod
+    def _run_placeholders() -> Dict[str, str]:
+        """Values a server config may reference as ``${name}``.
+
+        A stdio server is a separate process started once per scenario, so it
+        has no way to learn where this scenario's output goes -- config files
+        can only carry a fixed path, and everything the server writes piles up
+        in one directory with no way to tell one run from the next. These let
+        the config point at the same per-scenario folders Hercules itself uses.
+        """
+        conf = get_global_conf()
+        test_id = conf.get_default_test_id()
+        return {
+            "test_id": test_id,
+            "proof_path": conf.get_proof_path(test_id),
+            "log_path": conf.get_source_log_folder_path(test_id),
+            "project_base": conf.get_project_source_root(),
+        }
+
+    @staticmethod
+    def _expand(value: Any, placeholders: Dict[str, str]) -> Any:
+        """Substitute ``${name}`` in a string, leaving unknown names alone."""
+        if not isinstance(value, str):
+            return value
+        for name, replacement in placeholders.items():
+            value = value.replace("${" + name + "}", replacement)
+        return value
+
     async def connect_mcp_server(self, server_name: str, server_config: Dict[str, Any]) -> bool:
         """Connect to an MCP server and register tools for LangGraph agents."""
         try:
@@ -271,9 +299,17 @@ class MCPHelper:
 
             client_cm: Any = None
             if transport == "stdio":
+                placeholders = self._run_placeholders()
                 command = server_config.get("command", "python")
-                args = server_config.get("args", [])
-                server_params = StdioServerParameters(command=command, args=args)
+                args = [self._expand(arg, placeholders) for arg in server_config.get("args", [])]
+                # The MCP SDK hands a stdio server a scrubbed environment
+                # (HOME/PATH/SHELL/USER and little else), so a variable exported
+                # in the shell never reaches it. An `env` block in the server
+                # config is the supported way to pass one, and it was being
+                # dropped on the floor here.
+                configured_env = server_config.get("env") or {}
+                env = {**get_default_environment(), **{key: str(self._expand(value, placeholders)) for key, value in configured_env.items()}}
+                server_params = StdioServerParameters(command=command, args=args, env=env)
 
                 client_cm = stdio_client(server_params)
                 read, write = await getattr(client_cm, "__aenter__")()
