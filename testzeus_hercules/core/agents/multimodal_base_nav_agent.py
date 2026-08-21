@@ -48,7 +48,14 @@ class MultimodalBaseNavAgent(BaseNavAgent):
         )
         if user_ltm:
             user_ltm = "\n" + user_ltm
-            system_message = Template(system_message).substitute(
+            # safe_substitute, not substitute: a prompt is prose, and prose about
+            # APIs is full of dollar signs -- ${name} placeholders, shell snippets,
+            # jq filters. substitute() treats every one of them as a variable it
+            # must be given and raises KeyError otherwise, which fails agent
+            # construction and takes down the whole run before a single case
+            # starts. Leaving unknown placeholders as written is the right
+            # reading: they are text the model should see, not values to fill.
+            system_message = Template(system_message).safe_substitute(
                 basic_test_information=user_ltm
             )
 
