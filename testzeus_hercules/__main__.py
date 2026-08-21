@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from contextlib import suppress
 
 from junit2htmlreport.runner import run as prepare_html
 from testzeus_hercules.config import get_global_conf, set_global_conf
@@ -54,19 +55,53 @@ async def sequential_process() -> None:
             command=cmd,
             dont_terminate_browser_after_run=dont_close_browser,
         )
-        await runner.start()
+
+        # One scenario blowing up must not take the rest of the run with it.
+        # Anything raised here reaches a_main and ends the process, so a single
+        # transient provider error (a 502 from an LLM gateway, a dropped
+        # connection) discards every scenario that had not run yet -- including
+        # ones that would have passed. Record the failure against this scenario
+        # and carry on, which is what a suite runner is expected to do.
+        scenario_error: Exception | None = None
+        try:
+            await runner.start()
+        except (Exception, asyncio.CancelledError) as e:
+            scenario_error = e
+            logger.error(
+                "Scenario %r aborted: %s: %s. Continuing with the remaining scenarios.",
+                scenario,
+                type(e).__name__,
+                e,
+            )
+            with suppress(Exception):
+                await runner.shutdown()
 
         runner_result = {}
         cost_metrics = {}
 
-        if runner.result and getattr(runner.result, "cost", None):
+        if scenario_error is not None:
+            runner_result = {
+                "terminate": "yes",
+                "is_passed": False,
+                "assert_summary": (
+                    f"EXPECTED RESULT: the scenario runs to completion.\n"
+                    f"ACTUAL RESULT: it aborted with "
+                    f"{type(scenario_error).__name__}: {scenario_error}"
+                ),
+                "final_response": (
+                    f"Scenario aborted before it could report: "
+                    f"{type(scenario_error).__name__}: {scenario_error}"
+                ),
+            }
+
+        if scenario_error is None and runner.result and getattr(runner.result, "cost", None):
             cost_metrics = runner.result.cost
         elif get_global_conf().get_token_verbose():
             logger.warning("Token verbose enabled, but LangGraph result did not include cost metrics.")
 
         execution_time = runner.execution_time
 
-        if runner.result:
+        if scenario_error is None and runner.result:
             summary = runner.result.summary
             if summary:
                 runner_result = parse_agent_response(summary)
