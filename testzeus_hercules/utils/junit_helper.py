@@ -101,9 +101,22 @@ class JUnitXMLGenerator:
             else:
                 test_case.system_out = assert_summary
         else:
-            # When there are no assertions, only fail if the task didn't complete successfully
-            if terminate == "no":
-                test_case.result = Failure(message=str(assert_summary or final_response))
+            # A scenario that stopped without asserting anything verified nothing,
+            # so it cannot be reported as a pass. The planner narrates the reason
+            # in final_response -- an unreachable tool, a provider error, a
+            # precondition it could not establish -- but those runs used to land
+            # here with terminate="yes" and come out green, which turns an
+            # infrastructure outage into a clean report.
+            # Read assert_summary off json_data rather than the local: it is
+            # defaulted to "Runtime Failure" above, and that placeholder is
+            # truthy, so it would mask the reason the planner actually wrote.
+            test_case.result = Failure(
+                message=str(
+                    json_data.get("assert_summary")
+                    or final_response
+                    or "The scenario ended without asserting anything."
+                )
+            )
 
         opt_list = []
         test_props = Properties()
