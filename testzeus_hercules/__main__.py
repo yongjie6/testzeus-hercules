@@ -80,8 +80,14 @@ async def sequential_process() -> None:
         cost_metrics = {}
 
         if scenario_error is not None:
+            # is_assert must be set: build_junit_xml only consults is_passed on
+            # the assertion branch, and the other branch treats terminate="yes"
+            # as a clean finish. Without it an aborted scenario is reported as a
+            # pass -- which is the one outcome worth going out of the way to
+            # prevent.
             runner_result = {
                 "terminate": "yes",
+                "is_assert": True,
                 "is_passed": False,
                 "assert_summary": (
                     f"EXPECTED RESULT: the scenario runs to completion.\n"

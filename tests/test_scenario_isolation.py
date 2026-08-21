@@ -107,3 +107,29 @@ def test_the_failing_scenario_is_reported_as_failed(captured) -> None:
 def test_healthy_scenarios_keep_their_own_result(captured) -> None:
     ok = next(e for e in captured if e["scenario"] == "third")["result"]
     assert ok.get("is_passed") is True
+
+
+def test_the_report_actually_marks_the_aborted_scenario_failed(captured, tmp_path) -> None:
+    """The dict saying is_passed=False is not enough; JUnit has to agree.
+
+    build_junit_xml only consults is_passed when is_assert is set, and
+    otherwise reads terminate="yes" as a clean finish -- so a result that looks
+    failed in Python can still come out green in the report. This asserts on
+    the generated XML, which is what anyone reading the run actually sees.
+    """
+    from junitparser import Failure
+
+    from testzeus_hercules.utils.junit_helper import JUnitXMLGenerator
+
+    failed = next(e for e in captured if e["scenario"] == "boom")["result"]
+    blank = str(tmp_path)
+    generator = JUnitXMLGenerator(
+        "F", blank, blank, blank, blank, blank, blank, blank, blank
+    )
+    generator.add_test_case("boom", "F", failed, 1.0, {})
+
+    results = [case.result for case in generator.suite]
+    flattened = [r for entry in results for r in (entry if isinstance(entry, list) else [entry])]
+    assert any(isinstance(r, Failure) for r in flattened), (
+        "an aborted scenario was reported as a pass"
+    )
