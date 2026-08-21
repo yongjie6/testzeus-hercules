@@ -136,12 +136,32 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 | `mp_set_storage` / `mp_get_storage` / `mp_clear_storage` | storage 读写清 |
 | `mp_mock_wx` / `mp_restore_wx` | mock wx API |
 | `mp_wait` / `mp_screenshot` | 等待 / 截图存证 |
+| `mp_visual_check` | 把当前画面交给视觉模型回答一个问题，**看快照看不到的东西** |
+| `mp_visual_compare` | 和基准图比对，用于视觉回归 |
 | `mp_webview_url` | 读 web-view 的 src，桥接到浏览器测试 |
 | `mp_evaluate` | 逃生舱，逻辑层执行 JS |
 
 **优先用 `mp_snapshot` + `mp_tap_text` + 命名路由**，对齐 `fe_app/packages/e2e/tests/AGENTS.md` 的「像用户一样」原则：按可见文案和角色定位，不依赖 class/属性/顺序号。`mp_tap(selector)` 这类按选择器的工具是兜底，正常用例里不该出现。
 
 选择器是 **WXML 选择器**，不是浏览器 DOM 的 CSS 选择器。
+
+## 视觉断言
+
+`mp_snapshot` 读的是 WXML 树，页面壳之外的东西它看不到——底部 tabBar 由原生渲染，
+不在树里。图片是否真的渲染出来、元素有没有被遮挡或截断，也都是快照结构上答不了的。
+这两个工具把画面交给视觉模型来判断。
+
+要在 `mcp_servers.json` 的 args 里配 `--vision-model` / `--vision-base-url` /
+`--vision-key`（MCP stdio 不透传环境变量，只能走参数），`mp_visual_compare` 另需
+`--baseline-dir`。没配就直接报错，不会静默降级。
+
+**默认还是用快照。** 每次视觉调用要传约 240KB 图片，判定来自模型对画面的描述，
+天然比文案匹配模糊。只在判定对象本身是视觉性的时候用，问题也要问具体——
+「底部导航栏有哪几个标签」可靠，「导航栏正常吗」不可靠。
+
+基准图不会自动生成：首次调用 `mp_visual_compare` 会存一张 `<名字>.candidate.png`
+然后失败，人看过确认没问题、手动改名成 `<名字>.png` 才算数。自动采纳的话，
+首次运行时页面正好是坏的就把故障固化成了基准，之后每次都"通过"。
 
 ## 用例长这样
 

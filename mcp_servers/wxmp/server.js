@@ -56,6 +56,21 @@ const GATEWAY_CONTROL = flag(
 // runs had evidence only when a case asked for it, so reports came back with
 // nothing to look at. Capture around actions here instead, which keeps the
 // evidence chain without every case having to spell it out.
+/**
+ * Vision model, used by mp_visual_check.
+ *
+ * Some of the app is drawn outside the page's WXML tree -- the tabBar is
+ * rendered by the mini program shell, so a snapshot cannot see it however the
+ * assertion is phrased. A screenshot can. Configured separately from Hercules'
+ * own models because this server is a different process and receives nothing
+ * from that config.
+ */
+const VISION_MODEL = flag("vision-model", process.env.WXMP_VISION_MODEL || "");
+const VISION_BASE = flag("vision-base-url", process.env.WXMP_VISION_BASE_URL || "");
+const VISION_KEY = flag("vision-key", process.env.WXMP_VISION_KEY || "");
+const VISION_READY = Boolean(VISION_MODEL && VISION_BASE && VISION_KEY);
+const BASELINE_DIR = flag("baseline-dir", process.env.WXMP_BASELINE_DIR || "");
+
 const AUTO_SHOT = flag("auto-screenshot", process.env.WXMP_AUTO_SCREENSHOT || "on") !== "off";
 
 /** Tools that change what is on screen and are therefore worth capturing. */
@@ -228,6 +243,45 @@ async function requireElement(selector) {
   return el;
 }
 
+/** Ask the vision model about one or two images. */
+async function askVision(prompt, images) {
+  if (!VISION_READY) {
+    throw new Error(
+      "No vision model configured. Pass --vision-model, --vision-base-url and " +
+        "--vision-key in this server's args in mcp_servers.json."
+    );
+  }
+  const content = [{ type: "text", text: prompt }];
+  for (const b64 of images) {
+    content.push({ type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } });
+  }
+  const res = await fetch(`${VISION_BASE.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${VISION_KEY}` },
+    body: JSON.stringify({
+      model: VISION_MODEL,
+      max_completion_tokens: 3000,
+      messages: [{ role: "user", content }],
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Vision model returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  const answer = (await res.json())?.choices?.[0]?.message?.content?.trim();
+  if (!answer) throw new Error("Vision model returned an empty answer.");
+  return answer;
+}
+
+/** Fresh screenshot of the simulator, as base64. */
+async function screenBase64() {
+  const mp = await getMiniProgram();
+  const page = await mp.currentPage();
+  const shot = await mp.screenshot();
+  const image = typeof shot === "string" ? shot : shot?.data;
+  if (!image) throw new Error("The simulator returned no image; is it rendering?");
+  return { page, image };
+}
+
 /** Current page plus its parsed nodes; one round trip for the wxml. */
 async function readPage() {
   const mp = await getMiniProgram();
@@ -331,6 +385,54 @@ const TOOLS = [
       "have not inspected yet, and again after an action changes the screen. " +
       "This is the mini program equivalent of looking at the app.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "mp_visual_check",
+    description:
+      "Look at the screen and answer a question about it. Use this for what a " +
+      "snapshot cannot see: the bottom tab bar and other native chrome drawn " +
+      "outside the page, whether an image actually rendered or came out broken, " +
+      "whether something is covered or cut off. For text and controls inside the " +
+      "page, mp_snapshot is cheaper and more exact -- reach for this only when " +
+      "the thing you need to judge is visual.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        looking_for: {
+          type: "string",
+          description:
+            "What to judge, as a question, e.g. 底部导航栏有哪几个标签？ or 头像图片加载出来了吗？",
+        },
+      },
+      required: ["looking_for"],
+    },
+  },
+  {
+    name: "mp_visual_compare",
+    description:
+      "Compare the screen against a stored reference image and report what " +
+      "changed. Use for visual regression -- layout shifting, elements " +
+      "overlapping or disappearing, colours or spacing going wrong -- the kind " +
+      "of thing that is obvious to look at and hard to phrase as a text " +
+      "assertion. For asking whether something specific is on screen, " +
+      "mp_visual_check is more direct.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reference: {
+          type: "string",
+          description:
+            "Name of the reference image, without extension, e.g. mine_page_logged_in",
+        },
+        focus: {
+          type: "string",
+          description:
+            "Optional: what to pay attention to, e.g. 只看底部导航栏. Narrow this " +
+            "when the page has content that legitimately changes between runs.",
+        },
+      },
+      required: ["reference"],
+    },
   },
   {
     name: "mp_tap_text",
@@ -781,6 +883,65 @@ const handlers = {
     return `Page: ${page.path}\n${formatSnapshot(nodes)}`;
   },
 
+  async mp_visual_check({ looking_for }) {
+    const { page, image } = await screenBase64();
+    const answer = await askVision(
+      `这是微信小程序页面 ${page.path} 的截图。请回答：${looking_for}\n` +
+        "只描述你在图上真正看到的内容。看不清或图上没有就直说，不要推测。",
+      [image]
+    );
+    return `Looking at ${page.path}: ${answer}`;
+  },
+
+  async mp_visual_compare({ reference, focus = "" }) {
+    if (!BASELINE_DIR) {
+      throw new Error(
+        "No baseline directory configured. Pass --baseline-dir in this server's " +
+          "args in mcp_servers.json."
+      );
+    }
+    const safe = String(reference).replace(/[^a-zA-Z0-9_-]/g, "_");
+    const refPath = path.join(BASELINE_DIR, `${safe}.png`);
+    const { page, image } = await screenBase64();
+
+    if (!fs.existsSync(refPath)) {
+      // Recording whatever is on screen right now would bless a broken page as
+      // the reference, and every later run would agree with it. Save it beside
+      // the baseline for a person to look at and promote deliberately.
+      fs.mkdirSync(BASELINE_DIR, { recursive: true });
+      const candidate = path.join(BASELINE_DIR, `${safe}.candidate.png`);
+      fs.writeFileSync(candidate, Buffer.from(image, "base64"));
+      throw new Error(
+        `No reference image at ${refPath}. The current screen was saved to ` +
+          `${candidate} -- check it looks right, then rename it to ${safe}.png ` +
+          "to make it the baseline."
+      );
+    }
+
+    const refB64 = fs.readFileSync(refPath).toString("base64");
+    const answer = await askVision(
+      `第一张是基准图，第二张是小程序页面 ${page.path} 的当前截图。\n` +
+        (focus ? `重点比较：${focus}\n` : "") +
+        "先用一行给出结论：一致 或 有差异。\n" +
+        "如果有差异，逐条列出你在图上真正看到的不同之处。" +
+        "只描述看到的内容，不要推测原因，也不要把两张图都有的东西写成差异。",
+      [refB64, image]
+    );
+
+    // Keep both frames next to the verdict; a verdict nobody can check is not
+    // evidence.
+    if (PROOF_DIR) {
+      const dir = path.join(PROOF_DIR, "visual_comparisons");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${safe}_current.png`), Buffer.from(image, "base64"));
+      fs.writeFileSync(
+        path.join(dir, `${safe}_verdict.txt`),
+        `page: ${page.path}\nreference: ${refPath}\n\n${answer}\n`
+      );
+    }
+    return `Compared ${page.path} against ${safe}:\n${answer}`;
+  },
+
   async mp_tap_text({ text, exact = false }) {
     const mp = await getMiniProgram();
     const page = await mp.currentPage();
@@ -1196,5 +1357,5 @@ await server.connect(new StdioServerTransport());
 log(
   `ready (endpoint=${WS_ENDPOINT}, fixture=${
     Object.keys(FIXTURE).length ? FIXTURE_DEFAULTS : "NONE - pass --fixture"
-  }, auto-screenshot=${AUTO_SHOT ? PROOF_DIR : "off"})`
+  }, auto-screenshot=${AUTO_SHOT ? PROOF_DIR : "off"}, vision=${VISION_READY ? VISION_MODEL : "off"})`
 );
