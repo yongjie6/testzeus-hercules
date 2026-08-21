@@ -71,6 +71,33 @@ Then body.userId 应该等于标签 "A" 的 userId
 - `API_REQUEST_TIMEOUT`——`generic_http_api` 的 HTTP 超时，默认 30 秒。见 [environment_variables.md](environment_variables.md)。
 - `run_hurl_suite` 依赖 `hurl` 二进制（`brew install hurl` 或见 [hurl.dev](https://hurl.dev/docs/installation.html)），不是 Python 依赖，`uv sync` 不会装。
 
+## 被测系统的 CI 接入
+
+以上讲的是怎么写用例。这节讲被测系统（SUT）自己的 CI 要怎么把这些用例接进去——三种被测系统的接入方式差别很大，不要混用同一套模板。
+
+### API
+
+按两条腿分别接：
+
+- **纯 Hurl 回归**：被测系统的 CI 不需要引入 Hercules 本体。`.hurl` 文件是自包含的，CI 只要装 `hurl` 二进制、把套件放进被测系统自己仓库、跑 `hurl --test --report-junit ...`，产出标准 JUnit 直接接现有 CI 的测试报告插件。可以挂在每次 push/PR 上，零 LLM 成本、确定性。
+- **`.feature` LLM 驱动路**：CI 需要 `pip install testzeus-hercules`、配 `LLM_MODEL_NAME`/`LLM_MODEL_API_KEY` 密钥、跑 `testzeus-hercules --input-file ... --output-path ... --test-data-path ...`，收集 `opt/output/` 下的 JUnit + `opt/proofs/` 作为 artifact。这条路非确定性、有 LLM 成本，建议只在 `workflow_dispatch`/nightly 跑,不要挂每次 push。
+
+两个 job 的完整可复制模板见 [api_testing_ci_template.yml](api_testing_ci_template.yml)——把占位符换成被测系统自己的信息，删掉用不到的那个 job 就能用。`.github/workflows/main-push.yml` 里 Hercules 自己 CI 的 `api_tests` job 是这个模式在本仓库里的实际运行样例（只是靶场换成了 `tests/api_testing_app`）。
+
+### Web
+
+这是 Hercules 最原生的场景（`browser_nav_agent` 走 Playwright），不是新的接入方式,参照 [main-test.yml](../.github/workflows/main-test.yml) 的模式：`playwright install --with-deps`（`make install`/`make test` 已经封装）→ 被测 Web 服务在 CI 里现起或指向已部署的 staging URL → 配 LLM key → 跑 `testzeus-hercules --input-file ...`。标准 `ubuntu-latest` GitHub-hosted runner 就够,不需要特殊环境。同样建议非确定性 + 有成本的这条路不要挂每次 push。
+
+### 小程序
+
+跟 Web/API 完全不是一个运维模型,接入前先看 [mcp_servers/wxmp/README.md](../mcp_servers/wxmp/README.md)，这里只提三条会直接卡住 CI 设计的约束：
+
+- **CI 必须是 macOS/Windows runner，进不了 Docker/ubuntu-latest**——微信开发者工具没有 Linux 版。
+- 而且基本只能是**常驻的 self-hosted runner**：开发者工具需要提前用界面导入 `dist-scenario` 包、勾选"不校验合法域名"、保持登录态,这些是一次性手动准备,ephemeral runner 每次从零起跑不起来。
+- 跑一条用例前需要三个进程按顺序就位——mock 网关（常驻）→ 开发者工具 `cli auto --auto-port` 打开自动化会话 → Hercules 通过 `wxmp` MCP server 连上去,`test_data/` 里必须显式约束"目标必须走 mcp,禁止浏览器工具"（否则 planner 默认把"打开页面"路由给 browser helper，这是接入时第一个会踩的坑）。
+
+这套更接近"物理测试机房"的运维模型，没有能直接复制粘贴的通用模板——具体 CI job 骨架要按那台常驻 runner 的实际预装状态来写。
+
 ## 例子
 
 `tests/test_not_for_ci/ApiTesting/`（Swagger 2.0，Petstore）和 `tests/test_not_for_ci/ApiTestingNew/`（OpenAPI 3.1，`tests/api_testing_app` 靶场）是两套完整例子，后者的 `hurl/` 子目录是对应的确定性对照组。ESM 那套更真实、覆盖更全的例子在 `additional_tools/esm_api.py` + `opt/cases/esm-*`，专用工具封装了泳道头、`baseReq`、登录态这些每次都要重复的样板，值得作为"专用工具封装前置成本"的参考实现。

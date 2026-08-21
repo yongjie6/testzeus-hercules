@@ -1,0 +1,118 @@
+# 被测系统 CI 接入模板 —— API 测试
+#
+# 这不是 Hercules 自己的 CI 文件，是给被测系统（SUT）团队复制到 *他们自己* 仓库里用的模板。
+# 对应 docs/api_testing.md 里的两条腿，拆成两个独立 job，按需删掉用不到的那个：
+#
+#   hurl_regression        —— 纯 .hurl 回归，不需要装 Hercules，也不需要 LLM key。
+#                              把 .github/workflows/main-push.yml 里 api_tests job 的
+#                              "Install hurl" + "Run the Hurl control-group suite" 两步
+#                              原样搬过来就是这个 job，这里只是去掉了 Hercules 自身的部分。
+#   hercules_feature_tests —— .feature 走 LLM 驱动路，需要装 testzeus-hercules + LLM key。
+#                              只在需要探索性覆盖时跑，不建议挂在每次 push 上（慢、花钱、非确定性）。
+#
+# 把本文件重命名为 .github/workflows/api-tests.yml 放进被测系统仓库，
+# 替换所有 <...> 占位符，删掉不需要的 job 即可。
+
+name: API Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:   # hercules_feature_tests 建议只保留这个触发方式，手动/按需跑
+
+env:
+  HURL_VERSION: "8.0.1"
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) 纯 Hurl 回归 —— 零 LLM 成本，确定性，可以挂在每次 push/PR 上。
+  #    被测系统的 CI 不需要引入 Hercules 本体，Hercules 在这条路径里
+  #    只是"生产 .hurl 文件的工具"，运行时用不到。
+  # ------------------------------------------------------------------
+  hurl_regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install hurl ${{ env.HURL_VERSION }}
+        run: |
+          set -euo pipefail
+          asset="hurl-${HURL_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSLO "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/${asset}"
+          checksum="$(curl -sSL "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/${asset}.sha256")"
+          # 官方 .sha256 文件只有 hash，没有文件名列，sha256sum -c 需要拼出这一行才能校验。
+          echo "${checksum}  ${asset}" | sha256sum -c -
+          tar xzf "${asset}"
+          sudo mv "hurl-${HURL_VERSION}-x86_64-unknown-linux-gnu/bin/hurl" /usr/local/bin/hurl
+          hurl --version
+
+      # 如果被测服务需要在 CI 里现起（而不是打一个已部署的 staging 环境），在这里加步骤，
+      # 比如 docker compose up -d / npm run start & 加一个健康检查轮询，可以参考
+      # main-push.yml 的 api_tests job 里 "Start the local API testing app" 那一步。
+      - name: Start the service under test
+        run: |
+          echo "TODO: 启动被测服务，或者直接把 --variable server=... 换成已部署的 staging URL"
+
+      - name: Run the Hurl regression suite
+        run: |
+          hurl --test --report-junit hurl-report.xml \
+            --variable server="<SERVICE_BASE_URL>" \
+            --variable run_id="${{ github.run_id }}" \
+            <PATH_TO_YOUR_HURL_SUITE>/*.hurl
+          # variables 按需增删；hurl 自己的 {{name}} 占位符语法见 https://hurl.dev
+
+      - name: Upload Hurl JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hurl-report
+          path: hurl-report.xml
+        # 大多数 CI 平台的测试报告插件（GitHub 的 test-reporter action、GitLab 的
+        # junit artifact、Jenkins 的 junit 步骤）都能直接吃这份标准 JUnit XML。
+
+  # ------------------------------------------------------------------
+  # 2) .feature LLM 驱动路 —— 覆盖"断言依赖上下文判断"的探索性场景。
+  #    需要 LLM key，有成本和非确定性，建议 workflow_dispatch 手动触发或跑 nightly，
+  #    不要挂在每次 push 上。
+  # ------------------------------------------------------------------
+  hercules_feature_tests:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      LLM_MODEL_NAME: ${{ secrets.LLM_MODEL_NAME }}
+      LLM_MODEL_API_KEY: ${{ secrets.LLM_MODEL_API_KEY }}
+      # 或者用 per-agent 配置：AGENTS_LLM_CONFIG_FILE + AGENTS_LLM_CONFIG_FILE_REF_KEY，
+      # 见 testzeus-hercules 的 agents_llm_config-example.json.txt。
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Hercules
+        run: pip install testzeus-hercules
+
+      - name: Start the service under test
+        run: |
+          echo "TODO: 同上，起被测服务或者指向已部署的 staging URL"
+
+      - name: Run Hercules API feature tests
+        run: |
+          testzeus-hercules \
+            --input-file <PATH_TO_YOUR_FEATURE_FILES> \
+            --output-path opt/output \
+            --test-data-path <PATH_TO_YOUR_TEST_DATA>
+          # test_data/ 里放 base URL、凭证这些每条用例都要用到的东西，
+          # 用 ${name} 语法在 .feature 步骤里跨请求传值（见 docs/api_testing.md）。
+
+      - name: Upload JUnit + HTML report + proofs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hercules-report
+          path: |
+            opt/output/**
+            opt/proofs/**
