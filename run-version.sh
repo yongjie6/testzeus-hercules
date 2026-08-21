@@ -7,6 +7,10 @@ set -euo pipefail
 V="${1:?用法: ./run-version.sh <版本|regression> [套件名]   例如 2.0 / 2.0 mine / regression}"
 SUITE="${2:-}"
 
+# 环境自检先跑：曾经有一轮对着无渲染的 --cli 实例跑满 24 分钟，
+# 报了 7 个通过却一张截图都没有，而且判定是否可信无从确认。
+node mcp_servers/wxmp/preflight.mjs
+
 ./assemble_version.py "$V"
 BASE="opt/.run/$V"
 
