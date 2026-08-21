@@ -9,9 +9,15 @@ import asyncio
 import os
 
 import pytest
-
 from testzeus_hercules.config import get_global_conf
+
+# mcp_help and core.tools.mcp_tools import each other, so mcp_help can only be
+# imported through the tool package -- reaching for it directly first raises
+# ImportError on a partially initialized module. Import order here is load
+# bearing, and it only shows up when another test has not already pulled these
+# in, which is why this test passed alone and failed in the full suite.
 from testzeus_hercules.core.tools.mcp_tools import MCPHelper
+from testzeus_hercules.utils import mcp_help
 
 
 @pytest.fixture
@@ -64,8 +70,6 @@ def test_a_config_without_placeholders_is_unchanged(scenario):
 
 
 def test_stdio_server_is_started_with_the_expanded_config(scenario, monkeypatch):
-    from testzeus_hercules.utils import mcp_help
-
     captured = {}
 
     def fake_stdio_client(server_params):
