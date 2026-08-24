@@ -61,9 +61,7 @@ class BaseConfigManager:
         self.paths: PathsDict = {}
         self._config: ConfigDict = config_dict.copy()
         self._ignore_env: bool = ignore_env
-        self._is_test_env: bool = (
-            os.environ.get("IS_TEST_ENV", "false").lower() == "true"
-        )
+        self._is_test_env: bool = os.environ.get("IS_TEST_ENV", "false").lower() == "true"
         self._default_test_id: str = "default"
 
         # 1) Possibly load .env if not in test environment
@@ -89,9 +87,7 @@ class BaseConfigManager:
         self._finalize_defaults()
 
     @classmethod
-    def from_dict(
-        cls, config_dict: ConfigDict, ignore_env: bool = False
-    ) -> "BaseConfigManager":
+    def from_dict(cls, config_dict: ConfigDict, ignore_env: bool = False) -> "BaseConfigManager":
         """Create a BaseConfigManager instance from a dictionary.
 
         Args:
@@ -104,9 +100,7 @@ class BaseConfigManager:
         return cls(config_dict=config_dict, ignore_env=ignore_env)
 
     @classmethod
-    def from_json(
-        cls, json_file_path: str, ignore_env: bool = False
-    ) -> "BaseConfigManager":
+    def from_json(cls, json_file_path: str, ignore_env: bool = False) -> "BaseConfigManager":
         """Create a BaseConfigManager instance from a JSON file.
 
         Args:
@@ -144,9 +138,7 @@ class BaseConfigManager:
             elif ext.lower() == ".json":
                 loaded_config = json.load(f)
             else:
-                logger.error(
-                    "Unsupported config file format. Use .yaml, .yml, or .json"
-                )
+                logger.error("Unsupported config file format. Use .yaml, .yml, or .json")
                 exit(1)
 
         if not isinstance(loaded_config, dict):
@@ -175,6 +167,7 @@ class BaseConfigManager:
             "browser_path": "BROWSER_PATH",
             "browser_version": "BROWSER_VERSION",
             "headless": "HEADLESS",
+            "skip_browser": "SKIP_BROWSER",
             "record_video": "RECORD_VIDEO",
             "take_screenshots": "TAKE_SCREENSHOTS",
             "save_proofs": "TAKE_SCREENSHOTS",
@@ -215,9 +208,7 @@ class BaseConfigManager:
         Parse Hercules-specific command-line arguments
         and place them into the environment for consistency.
         """
-        parser = argparse.ArgumentParser(
-            description="Hercules: The World's First Open-Source AI Agent for End-to-End Testing"
-        )
+        parser = argparse.ArgumentParser(description="Hercules: The World's First Open-Source AI Agent for End-to-End Testing")
         parser.add_argument(
             "--config",
             type=str,
@@ -225,9 +216,7 @@ class BaseConfigManager:
             required=False,
         )
         # Basic path configuration
-        parser.add_argument(
-            "--input-file", type=str, help="Path to the input file.", required=False
-        )
+        parser.add_argument("--input-file", type=str, help="Path to the input file.", required=False)
         parser.add_argument(
             "--output-path",
             type=str,
@@ -429,9 +418,7 @@ class BaseConfigManager:
                 args.llm_model_api_type,
             )
         )
-        agents_llm_cli_requested = bool(
-            args.agents_llm_config_file or args.agents_llm_config_file_ref_key
-        )
+        agents_llm_cli_requested = bool(args.agents_llm_config_file or args.agents_llm_config_file_ref_key)
         if direct_llm_cli_requested and not agents_llm_cli_requested:
             self._config.pop("AGENTS_LLM_CONFIG_FILE", None)
             self._config.pop("AGENTS_LLM_CONFIG_FILE_REF_KEY", None)
@@ -452,9 +439,7 @@ class BaseConfigManager:
         if args.agents_llm_config_file:
             set_cli_value("AGENTS_LLM_CONFIG_FILE", args.agents_llm_config_file)
         if args.agents_llm_config_file_ref_key:
-            set_cli_value(
-                "AGENTS_LLM_CONFIG_FILE_REF_KEY", args.agents_llm_config_file_ref_key
-            )
+            set_cli_value("AGENTS_LLM_CONFIG_FILE_REF_KEY", args.agents_llm_config_file_ref_key)
 
         # Portkey Configuration
         if args.enable_portkey:
@@ -508,6 +493,7 @@ class BaseConfigManager:
             "TEST_DATA_PATH",
             "BROWSER_TYPE",
             "HEADLESS",
+            "SKIP_BROWSER",
             "RECORD_VIDEO",
             "TAKE_SCREENSHOTS",
             "CAPTURE_NETWORK",
@@ -603,9 +589,7 @@ class BaseConfigManager:
         llm_model_name = self._config.get("LLM_MODEL_NAME")
         llm_model_api_key = self._config.get("LLM_MODEL_API_KEY")
         agents_llm_config_file = self._config.get("AGENTS_LLM_CONFIG_FILE")
-        agents_llm_config_file_ref_key = self._config.get(
-            "AGENTS_LLM_CONFIG_FILE_REF_KEY"
-        )
+        agents_llm_config_file_ref_key = self._config.get("AGENTS_LLM_CONFIG_FILE_REF_KEY")
 
         # Check if Portkey is enabled
         if self._config.get("ENABLE_PORTKEY", "").lower() == "true":
@@ -617,9 +601,7 @@ class BaseConfigManager:
             # Validate Portkey strategy if provided
             portkey_strategy = self._config.get("PORTKEY_STRATEGY")
             if portkey_strategy and portkey_strategy not in ["fallback", "loadbalance"]:
-                logger.error(
-                    "Invalid PORTKEY_STRATEGY. Must be either 'fallback' or 'loadbalance'"
-                )
+                logger.error("Invalid PORTKEY_STRATEGY. Must be either 'fallback' or 'loadbalance'")
                 exit(1)
 
             # Validate JSON configurations if provided
@@ -646,15 +628,10 @@ class BaseConfigManager:
 
         has_legacy_direct_llm_config = bool(llm_model_name or llm_model_api_key)
         if has_legacy_direct_llm_config:
-            logger.warning(
-                "LLM_MODEL_* is deprecated. Please migrate to "
-                "AGENTS_LLM_CONFIG_FILE."
-            )
+            logger.warning("LLM_MODEL_* is deprecated. Please migrate to " "AGENTS_LLM_CONFIG_FILE.")
 
         if bool(agents_llm_config_file) != bool(agents_llm_config_file_ref_key):
-            logger.error(
-                "AGENTS_LLM_CONFIG_FILE and AGENTS_LLM_CONFIG_FILE_REF_KEY must be set together."
-            )
+            logger.error("AGENTS_LLM_CONFIG_FILE and AGENTS_LLM_CONFIG_FILE_REF_KEY must be set together.")
             exit(1)
 
     def _finalize_defaults(self) -> None:
@@ -672,24 +649,12 @@ class BaseConfigManager:
             "INPUT_GHERKIN_FILE_PATH",
             os.path.join(project_source_root, "input/test.feature"),
         )
-        self._config.setdefault(
-            "JUNIT_XML_BASE_PATH", os.path.join(project_source_root, "output")
-        )
-        self._config.setdefault(
-            "TEST_DATA_PATH", os.path.join(project_source_root, "test_data")
-        )
-        self._config.setdefault(
-            "SCREEN_SHOT_PATH", os.path.join(project_source_root, "proofs")
-        )
-        self._config.setdefault(
-            "PROJECT_TEMP_PATH", os.path.join(project_source_root, "temp")
-        )
-        self._config.setdefault(
-            "SOURCE_LOG_FOLDER_PATH", os.path.join(project_source_root, "log_files")
-        )
-        self._config.setdefault(
-            "TMP_GHERKIN_PATH", os.path.join(project_source_root, "gherkin_files")
-        )
+        self._config.setdefault("JUNIT_XML_BASE_PATH", os.path.join(project_source_root, "output"))
+        self._config.setdefault("TEST_DATA_PATH", os.path.join(project_source_root, "test_data"))
+        self._config.setdefault("SCREEN_SHOT_PATH", os.path.join(project_source_root, "proofs"))
+        self._config.setdefault("PROJECT_TEMP_PATH", os.path.join(project_source_root, "temp"))
+        self._config.setdefault("SOURCE_LOG_FOLDER_PATH", os.path.join(project_source_root, "log_files"))
+        self._config.setdefault("TMP_GHERKIN_PATH", os.path.join(project_source_root, "gherkin_files"))
 
         # Extra environment defaults from original code
         if "HF_HOME" not in self._config:
@@ -708,6 +673,7 @@ class BaseConfigManager:
 
         # HEADLESS, RECORD_VIDEO, etc. can also be "finalized" here if needed
         self._config.setdefault("HEADLESS", "true")
+        self._config.setdefault("SKIP_BROWSER", "false")
         self._config.setdefault("RECORD_VIDEO", "true")
         self._config.setdefault("TAKE_SCREENSHOTS", "true")
 
@@ -760,9 +726,7 @@ class BaseConfigManager:
         # Python Sandbox defaults
         self._config.setdefault("SANDBOX_TENANT_ID", "")  # No default tenant
         self._config.setdefault("SANDBOX_PACKAGES", "")  # No default packages
-        self._config.setdefault(
-            "SANDBOX_CUSTOM_INJECTIONS", "{}"
-        )  # No default custom injections
+        self._config.setdefault("SANDBOX_CUSTOM_INJECTIONS", "{}")  # No default custom injections
 
         # LLM Model Configuration defaults
         # --------------------------------------------------
@@ -792,14 +756,10 @@ class BaseConfigManager:
 
         # LLM Parameters defaults (based on OpenAI recommendations)
         # --------------------------------------------------
-        self._config.setdefault(
-            "LLM_MODEL_TEMPERATURE", "0.0"
-        )  # Default to deterministic
+        self._config.setdefault("LLM_MODEL_TEMPERATURE", "0.0")  # Default to deterministic
         self._config.setdefault("LLM_MODEL_CACHE_SEED", None)  # No default seed
         self._config.setdefault("LLM_MODEL_SEED", None)  # No default seed
-        self._config.setdefault(
-            "LLM_MODEL_MAX_TOKENS", "4096"
-        )  # Default reasonable output
+        self._config.setdefault("LLM_MODEL_MAX_TOKENS", "4096")  # Default reasonable output
         # self._config.setdefault("LLM_MODEL_PRESENCE_PENALTY", "0.0")
         # self._config.setdefault("LLM_MODEL_FREQUENCY_PENALTY", "0.0")
         # self._config.setdefault("LLM_MODEL_STOP", None)  # No default stop sequences
@@ -823,12 +783,8 @@ class BaseConfigManager:
                 AgentsLLMConfigManager,
             )
 
-            agent_cfg = AgentsLLMConfigManager.get_instance().get_agent_config(
-                "planner_agent"
-            )
-            return convert_model_config_to_langchain_format(
-                agent_cfg["model_config_params"]
-            )
+            agent_cfg = AgentsLLMConfigManager.get_instance().get_agent_config("planner_agent")
+            return convert_model_config_to_langchain_format(agent_cfg["model_config_params"])
         model_cfg = {
             "model": self._config.get("LLM_MODEL_NAME"),
             "model_api_key": self._config.get("LLM_MODEL_API_KEY"),
@@ -911,6 +867,16 @@ class BaseConfigManager:
     def should_run_headless(self) -> bool:
         return self._config["HEADLESS"].lower().strip() == "true"
 
+    def should_skip_browser(self) -> bool:
+        """Whether to run without starting a browser at all.
+
+        A suite driven entirely through MCP or API tools never touches the
+        browser, but one still gets launched per scenario -- paying the startup
+        cost and leaving empty screenshots/ and videos/ folders in the proofs,
+        which reads as evidence that was captured and came back empty.
+        """
+        return str(self._config.get("SKIP_BROWSER", "false")).lower().strip() == "true"
+
     def should_record_video(self) -> bool:
         return self._config["RECORD_VIDEO"].lower().strip() == "true"
 
@@ -969,10 +935,7 @@ class BaseConfigManager:
 
     def should_take_bounding_box_screenshots(self) -> bool:
         """Check if bounding box screenshots should be enabled"""
-        return (
-            self._config.get("ENABLE_BOUNDING_BOX_SCREENSHOTS", "false").lower()
-            == "true"
-        )
+        return self._config.get("ENABLE_BOUNDING_BOX_SCREENSHOTS", "false").lower() == "true"
 
     def should_enable_ublock_extension(self) -> bool:
         """Check if uBlock extension should be enabled"""
@@ -1189,9 +1152,7 @@ class BaseConfigManager:
             logger.warning("Invalid API_REQUEST_TIMEOUT %r, falling back to 30s", raw)
             return 30.0
         if timeout <= 0:
-            logger.warning(
-                "API_REQUEST_TIMEOUT must be positive, got %r, falling back to 30s", raw
-            )
+            logger.warning("API_REQUEST_TIMEOUT must be positive, got %r, falling back to 30s", raw)
             return 30.0
         return timeout
 
@@ -1337,7 +1298,5 @@ set_global_conf(
 from testzeus_hercules.telemetry import EventData, EventType, add_event
 
 logger.info("[Singleton] MODE: %s", get_global_conf().get_mode())
-logger.info(
-    "[Singleton] Project Source Root: %s", get_global_conf().get_project_source_root()
-)
+logger.info("[Singleton] Project Source Root: %s", get_global_conf().get_project_source_root())
 # Send final telemetryCONF.send_config_telemetry()

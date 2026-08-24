@@ -89,15 +89,8 @@ async def sequential_process() -> None:
                 "terminate": "yes",
                 "is_assert": True,
                 "is_passed": False,
-                "assert_summary": (
-                    f"EXPECTED RESULT: the scenario runs to completion.\n"
-                    f"ACTUAL RESULT: it aborted with "
-                    f"{type(scenario_error).__name__}: {scenario_error}"
-                ),
-                "final_response": (
-                    f"Scenario aborted before it could report: "
-                    f"{type(scenario_error).__name__}: {scenario_error}"
-                ),
+                "assert_summary": (f"EXPECTED RESULT: the scenario runs to completion.\n" f"ACTUAL RESULT: it aborted with " f"{type(scenario_error).__name__}: {scenario_error}"),
+                "final_response": (f"Scenario aborted before it could report: " f"{type(scenario_error).__name__}: {scenario_error}"),
             }
 
         if scenario_error is None and runner.result and getattr(runner.result, "cost", None):
@@ -147,10 +140,13 @@ async def sequential_process() -> None:
                 scenario,
                 feature_file_path=file_path,
                 output_file_path="",
-                proofs_path=get_global_conf().get_proof_path(runner.browser_manager.stake_id),
-                proofs_screenshot_path=runner.browser_manager._screenshots_dir,
-                proofs_video_path=runner.browser_manager.get_latest_video_path(),
-                network_logs_path=runner.browser_manager.request_response_log_file,
+                # With SKIP_BROWSER there is no browser manager, and the three
+                # paths it owns do not exist for this run. Proofs still do --
+                # MCP and API tools write there.
+                proofs_path=get_global_conf().get_proof_path(stake_id),
+                proofs_screenshot_path=(runner.browser_manager._screenshots_dir if runner.browser_manager else ""),
+                proofs_video_path=(runner.browser_manager.get_latest_video_path() if runner.browser_manager else ""),
+                network_logs_path=(runner.browser_manager.request_response_log_file if runner.browser_manager else ""),
                 logs_path=get_global_conf().get_source_log_folder_path(stake_id),
                 planner_thoughts_path=get_global_conf().get_source_log_folder_path(stake_id) + "/agent_inner_thoughts.json",
             )

@@ -177,6 +177,14 @@ LLM Parameters:
   - Default: `true`
   - Implementation: Controls browser visibility during test execution
 
+- `SKIP_BROWSER`: Run without starting a browser at all
+  - Values: `true`, `false`
+  - Default: `false`
+  - Implementation: `SingleCommandInputRunner.initialize` skips `PlaywrightManager` entirely.
+    Set it for suites driven purely through MCP or API tools -- otherwise a browser is
+    launched per scenario and leaves empty `screenshots/` and `videos/` folders in the
+    proofs, which read as evidence that was captured and came back empty.
+
 - `BROWSER_RESOLUTION`: Browser window resolution
   - Format: `width,height`
   - Example: `1920,1080`

@@ -32,9 +32,7 @@ class BaseRunner:
         self.is_running = False
         self.stake_id = stake_id
         self.dont_terminate_browser_after_run = dont_terminate_browser_after_run
-        self.save_chat_logs_to_files = os.getenv(
-            "SAVE_CHAT_LOGS_TO_FILE", "True"
-        ).lower() in ["true", "1"]
+        self.save_chat_logs_to_files = os.getenv("SAVE_CHAT_LOGS_TO_FILE", "True").lower() in ["true", "1"]
         self.planner_agent_name = "planner_agent"
         self.shutdown_event = asyncio.Event()
 
@@ -69,10 +67,15 @@ class BaseRunner:
             browser_nav_max_chat_round=self.nav_agent_number_of_rounds,
         )
 
-        self.browser_manager = PlaywrightManager(
-            gui_input_mode=False, stake_id=self.stake_id
-        )
-        await self.browser_manager.async_initialize()
+        # A suite driven entirely through MCP or API tools never uses the
+        # browser. Starting one anyway costs a launch per scenario and leaves
+        # empty screenshots/ and videos/ folders in the proofs, which look like
+        # evidence that was captured and came back empty.
+        if get_global_conf().should_skip_browser():
+            logger.info("SKIP_BROWSER is set, running without a browser")
+        else:
+            self.browser_manager = PlaywrightManager(gui_input_mode=False, stake_id=self.stake_id)
+            await self.browser_manager.async_initialize()
 
     async def clean_up(self) -> None:
         if self.simple_hercules:
@@ -83,17 +86,11 @@ class BaseRunner:
 
     async def save_chat_logs(self) -> None:
         """Save planner chat logs to file or logger."""
-        agents_map = (
-            cast(Dict[str, Any], self.simple_hercules.agents_map)
-            if self.simple_hercules
-            else {}
-        )
+        agents_map = cast(Dict[str, Any], self.simple_hercules.agents_map) if self.simple_hercules else {}
         res_output_thoughts_logs_di: Dict[str, List[Dict[str, Any]]] = {}
 
         if self.simple_hercules and self.simple_hercules._last_graph_result:
-            res_output_thoughts_logs_di[self.planner_agent_name] = list(
-                self.simple_hercules._last_graph_result.chat_history
-            )
+            res_output_thoughts_logs_di[self.planner_agent_name] = list(self.simple_hercules._last_graph_result.chat_history)
         elif self.planner_agent_name in agents_map:
             planner = agents_map[self.planner_agent_name]
             if hasattr(planner, "chat_messages"):
@@ -109,17 +106,11 @@ class BaseRunner:
         for key, vals in res_output_thoughts_logs_di.items():
             for idx, val in enumerate(vals):
                 logger.debug(f"Planner chat log: {val}")
-                content = (
-                    val["content"].replace("```json", "").replace("```", "").strip()
-                )
+                content = val["content"].replace("```json", "").replace("```", "").strip()
                 try:
-                    res_output_thoughts_logs_di[key][idx]["content"] = json.loads(
-                        content
-                    )
+                    res_output_thoughts_logs_di[key][idx]["content"] = json.loads(content)
                 except json.JSONDecodeError:
-                    logger.debug(
-                        f"Failed to decode JSON: {content}, keeping as multiline string"
-                    )
+                    logger.debug(f"Failed to decode JSON: {content}, keeping as multiline string")
                     res_output_thoughts_logs_di[key][idx]["content"] = content
 
         if self.save_chat_logs_to_files:
@@ -128,11 +119,7 @@ class BaseRunner:
                 "agent_inner_thoughts.json",
             )
             async with aiofiles.open(log_path, "w", encoding="utf-8") as f:
-                await f.write(
-                    json.dumps(
-                        res_output_thoughts_logs_di, ensure_ascii=False, indent=4
-                    )
-                )
+                await f.write(json.dumps(res_output_thoughts_logs_di, ensure_ascii=False, indent=4))
             logger.debug("Chat messages saved")
         else:
             logger.info(
@@ -152,18 +139,16 @@ class BaseRunner:
         if command:
             self.is_running = True
             start_time = time.time()
-            current_url = (
-                await self.browser_manager.get_current_url()
-                if self.browser_manager
-                else None
-            )
+            current_url = await self.browser_manager.get_current_url() if self.browser_manager else None
 
             if self.simple_hercules:
-                await self.browser_manager.update_processing_state("processing")  # type: ignore
-                result = await self.simple_hercules.process_command(
-                    command, current_url
-                )
-                await self.browser_manager.update_processing_state("done")  # type: ignore
+                # The browser is only along for the ride here -- it shows state
+                # in the GUI. Running the command must not depend on having one.
+                if self.browser_manager:
+                    await self.browser_manager.update_processing_state("processing")
+                result = await self.simple_hercules.process_command(command, current_url)
+                if self.browser_manager:
+                    await self.browser_manager.update_processing_state("done")
 
             elapsed_time = round(time.time() - start_time, 2)
 
@@ -175,7 +160,8 @@ class BaseRunner:
                 if last_message and last_message.get("terminate") == "yes":
                     logger.info(f"Final message: {last_message}")
 
-            await self.browser_manager.command_completed(command, elapsed_time)  # type: ignore
+            if self.browser_manager:
+                await self.browser_manager.command_completed(command, elapsed_time)
             self.is_running = False
 
         return result, elapsed_time
@@ -197,9 +183,7 @@ class BaseRunner:
 class CommandPromptRunner(BaseRunner):
     async def start(self) -> None:
         await self.initialize()
-        command: str = await async_input(
-            "Enter your command (or type 'exit' to quit): "
-        )
+        command: str = await async_input("Enter your command (or type 'exit' to quit): ")
         await self.process_command(command)
         await self.clean_up()
         await self.shutdown_event.wait()
