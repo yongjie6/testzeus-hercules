@@ -145,6 +145,22 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 
 选择器是 **WXML 选择器**，不是浏览器 DOM 的 CSS 选择器。
 
+## 跑小程序时关掉浏览器
+
+小程序用例全程走 MCP，不碰浏览器，但框架默认每条用例还是拉一个 chromium。除了启动开销，
+它会在每条用例的 proofs 里留下空的 `screenshots/` 和 `videos/`，看上去像「采集过、什么都没有」。
+
+```bash
+SKIP_BROWSER=true ./run-version.sh 1.0 mp
+```
+
+## 截不到图的时候
+
+开发者工具中途丢渲染层的话，截图会失败但逻辑层还活着，用例照跑照报绿——结论还在，
+支撑结论的东西没了。这时 server 会往该用例的 proofs 目录写一个 `EVIDENCE_MISSING.txt`，
+报告里对应出现一条 `Evidence Missing` 属性，写明失败了几次。它不会让用例判失败，
+只是让「没有证据」这件事在报告里看得见。
+
 ## 视觉断言
 
 `mp_snapshot` 读的是 WXML 树，页面壳之外的东西它看不到——底部 tabBar 由原生渲染，

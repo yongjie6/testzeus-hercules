@@ -65,6 +65,19 @@ class JUnitXMLGenerator:
         self.planner_thoughts_path = planner_thoughts_path
         self.network_logs_path = network_logs_path
 
+    def _evidence_gaps(self) -> list[str]:
+        """Lines from EVIDENCE_MISSING.txt in this scenario's proofs folder.
+
+        Any tool that fails to capture evidence appends a line there; the file
+        is absent on a run where nothing failed.
+        """
+        marker = os.path.join(str(self.proofs_path), "EVIDENCE_MISSING.txt")
+        try:
+            with open(marker, encoding="utf-8") as handle:
+                return [line.strip() for line in handle if line.strip()]
+        except OSError:
+            return []
+
     def add_test_case(
         self,
         scenario: str,
@@ -110,13 +123,13 @@ class JUnitXMLGenerator:
             # Read assert_summary off json_data rather than the local: it is
             # defaulted to "Runtime Failure" above, and that placeholder is
             # truthy, so it would mask the reason the planner actually wrote.
-            test_case.result = Failure(
-                message=str(
-                    json_data.get("assert_summary")
-                    or final_response
-                    or "The scenario ended without asserting anything."
-                )
-            )
+            test_case.result = Failure(message=str(json_data.get("assert_summary") or final_response or "The scenario ended without asserting anything."))
+
+        # A tool that could not capture what it was asked to capture leaves a
+        # marker in the proofs folder. Without this the scenario reports as a
+        # clean pass whose proofs folder is empty, and nothing says which of the
+        # two it is -- nothing to capture, or capture that failed.
+        evidence_gaps = self._evidence_gaps()
 
         opt_list = []
         test_props = Properties()
@@ -132,10 +145,14 @@ class JUnitXMLGenerator:
             )
         )
         test_props.add_property(Property(name="Proofs Screenshot", value=str(self.proofs_screenshot_path)))
+        if evidence_gaps:
+            test_props.add_property(Property(name="Evidence Missing", value=f"{len(evidence_gaps)} 次采集失败: " + "; ".join(evidence_gaps[:3])))
         test_props.add_property(Property(name="Network Logs", value=str(self.network_logs_path)))
         test_props.add_property(Property(name="Agents Internal Logs", value=str(self.logs_path)))
         test_props.add_property(Property(name="Planner Thoughts", value=str(self.planner_thoughts_path)))
         opt_list.append(f"Final Response: {final_response}")
+        if evidence_gaps:
+            opt_list.append(f"Evidence Missing: {len(evidence_gaps)} capture(s) failed, proofs are incomplete")
 
         for key, value in json_data.items():
             if key not in [

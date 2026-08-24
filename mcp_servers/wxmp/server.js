@@ -108,9 +108,27 @@ async function captureAfter(toolName) {
     await mp.screenshot({ path: path.join(PROOF_DIR, name) });
     return name;
   } catch (err) {
-    // Evidence is a nice-to-have; never fail the step over it.
+    // Never fail the step over a screenshot. But a scenario that passes with no
+    // evidence is the same shape as a false green -- the conclusion stands and
+    // the thing supporting it is not there -- so leave a marker the report can
+    // pick up instead of only a line in a log nobody reads afterwards.
     log(`auto screenshot after ${toolName} failed: ${err.message}`);
+    noteEvidenceGap(`${toolName}: ${err.message}`);
     return null;
+  }
+}
+
+/** Record a failed capture where the report generator will find it. */
+function noteEvidenceGap(detail) {
+  try {
+    fs.mkdirSync(PROOF_DIR, { recursive: true });
+    fs.appendFileSync(
+      path.join(PROOF_DIR, "EVIDENCE_MISSING.txt"),
+      `${new Date().toISOString()} ${detail}\n`
+    );
+  } catch {
+    // The proofs directory being unwritable is the very thing being reported;
+    // there is nowhere left to record it.
   }
 }
 
