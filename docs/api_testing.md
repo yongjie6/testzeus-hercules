@@ -100,4 +100,4 @@ Then body.userId 应该等于标签 "A" 的 userId
 
 ## 例子
 
-`tests/test_not_for_ci/ApiTesting/`（Swagger 2.0，Petstore）和 `tests/test_not_for_ci/ApiTestingNew/`（OpenAPI 3.1，`tests/api_testing_app` 靶场）是两套完整例子，后者的 `hurl/` 子目录是对应的确定性对照组。ESM 那套更真实、覆盖更全的例子在 `additional_tools/esm_api.py` + `opt/cases/esm-*`，专用工具封装了泳道头、`baseReq`、登录态这些每次都要重复的样板，值得作为"专用工具封装前置成本"的参考实现。
+`tests/test_not_for_ci/ApiTesting/`（Swagger 2.0，Petstore）和 `tests/test_not_for_ci/ApiTestingNew/`（OpenAPI 3.1，`tests/api_testing_app` 靶场）是两套完整例子，后者的 `hurl/` 子目录是对应的确定性对照组。ESM 那套更真实、覆盖更全的例子在 `additional_tools/esm_api.py` + `opt/cases/api/esm-*`，专用工具封装了泳道头、`baseReq`、登录态这些每次都要重复的样板，值得作为"专用工具封装前置成本"的参考实现。
