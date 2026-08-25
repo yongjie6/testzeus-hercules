@@ -1,0 +1,15 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/chats",
+  "response": {
+    "chats": [
+      {
+        "chatId": "chat-history-six-001",
+        "userId": "7",
+        "chatTitle": "工作压力聊聊",
+        "createdAtMs": "1700000000000",
+        "latestMessageAtMs": "1700000006000"
+      }
+    ]
+  }
+}

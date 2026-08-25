@@ -1,0 +1,24 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "candidateRelationshipGroups": [
+      {
+        "group": "CANDIDATE_RELATIONSHIP_TIME_GROUP_TODAY",
+        "totalCount": 1,
+        "candidates": [
+          {
+            "candidateRelationshipId": "9001",
+            "targetUser": {
+              "userId": "8",
+              "nickname": "候选关系甲",
+              "avatarRef": "https://daqian-bullet-demo.tos-cn-beijing.volces.com/tests/player_01_19233_selected.jpg"
+            },
+            "createdAt": "__TS_TODAY__",
+            "hasChatted": false
+          }
+        ]
+      }
+    ]
+  }
+}

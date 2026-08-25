@@ -1,0 +1,21 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "userInfoCompleted": true,
+    "entryStage": "HOME_ENTRY_STAGE_ANSWERING",
+    "hasUnfinishedAnswering": true,
+    "answeringSession": {
+      "sessionId": "assessment-session-001",
+      "userId": "7",
+      "questionVersionId": "assessment-v1",
+      "attemptNo": 1,
+      "status": "ANSWERING_SESSION_STATUS_IN_PROGRESS",
+      "currentQuestionNo": 34,
+      "answeredCount": 33,
+      "startedAtMs": "1700000000000",
+      "completedAtMs": "0",
+      "restartedFromSessionId": ""
+    }
+  }
+}

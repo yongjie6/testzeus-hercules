@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/user/me",
+  "response": {
+    "user": {
+      "userInfoCompleted": false,
+      "nickname": "",
+      "gender": "GENDER_UNSPECIFIED",
+      "birthDate": ""
+    }
+  }
+}

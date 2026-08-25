@@ -1,0 +1,62 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/chat/detail",
+  "response": {
+    "chat": {
+      "chatId": "chat-history-six-001",
+      "userId": "7",
+      "chatTitle": "工作压力聊聊",
+      "createdAtMs": "1700000000000",
+      "latestMessageAtMs": "1700000007000",
+      "turnStatus": "CHAT_TURN_STATUS_IDLE"
+    },
+    "messages": [
+      {
+        "messageId": "msg-hist-1",
+        "seqId": "1",
+        "role": "CHAT_MESSAGE_ROLE_USER",
+        "content": "最近工作有点累",
+        "createdAtMs": "1700000001000"
+      },
+      {
+        "messageId": "msg-hist-2",
+        "seqId": "2",
+        "role": "CHAT_MESSAGE_ROLE_ASSISTANT",
+        "content": "听起来你最近确实承担了不少压力，能说说具体是哪方面让你觉得累吗？",
+        "createdAtMs": "1700000002000",
+        "replySource": "CHAT_REPLY_SOURCE_MODEL"
+      },
+      {
+        "messageId": "msg-hist-3",
+        "seqId": "3",
+        "role": "CHAT_MESSAGE_ROLE_USER",
+        "content": "主要是项目deadline紧",
+        "createdAtMs": "1700000003000"
+      },
+      {
+        "messageId": "msg-hist-4",
+        "seqId": "4",
+        "role": "CHAT_MESSAGE_ROLE_ASSISTANT",
+        "content": "面对紧迫的deadline，你通常是怎么给自己调整节奏的？",
+        "createdAtMs": "1700000004000",
+        "replySource": "CHAT_REPLY_SOURCE_MODEL"
+      },
+      {
+        "messageId": "msg-hist-5",
+        "seqId": "5",
+        "role": "CHAT_MESSAGE_ROLE_USER",
+        "content": "会尽量列优先级",
+        "createdAtMs": "1700000005000"
+      },
+      {
+        "messageId": "msg-hist-6",
+        "seqId": "6",
+        "role": "CHAT_MESSAGE_ROLE_ASSISTANT",
+        "content": "列优先级是个很好的方法，这也和你动机里重视结构感的部分对应上了。",
+        "createdAtMs": "1700000006000",
+        "replySource": "CHAT_REPLY_SOURCE_MODEL"
+      }
+    ],
+    "latestSeqId": "6"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "conversationRelationships": [
+      {
+        "conversationRelationshipId": "relationship-default-nick-001",
+        "candidateRelationshipId": "candidate-default-nick-001",
+        "targetUser": {
+          "userId": "23",
+          "nickname": "小林",
+          "userInfoCompleted": true
+        },
+        "setting": {
+          "remarkName": "",
+          "tagText": "朋友"
+        },
+        "latestChatId": "chat-relationship-default-nick",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000000000",
+        "activatedAtMs": "1700000000000",
+        "latestChatSummary": "最近聊过边界感"
+      }
+    ]
+  }
+}

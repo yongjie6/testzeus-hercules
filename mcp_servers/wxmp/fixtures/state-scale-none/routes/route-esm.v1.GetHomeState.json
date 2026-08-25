@@ -1,0 +1,9 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "userInfoCompleted": true,
+    "entryStage": "HOME_ENTRY_STAGE_ANSWERING",
+    "hasUnfinishedAnswering": false
+  }
+}

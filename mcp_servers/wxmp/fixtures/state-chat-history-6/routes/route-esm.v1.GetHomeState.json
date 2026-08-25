@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "selfChat": {
+      "chatId": "chat-history-six-001",
+      "latestTitle": "工作压力聊聊",
+      "latestMessageAtMs": "1700000007000",
+      "latestChatSummary": "聊了聊最近工作压力和应对方式"
+    }
+  }
+}

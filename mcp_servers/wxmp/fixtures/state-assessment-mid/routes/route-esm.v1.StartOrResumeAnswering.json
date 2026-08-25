@@ -1,0 +1,236 @@
+{
+  "method": "POST",
+  "path": "/api/esm/v1/answering/start-or-resume",
+  "response": {
+    "session": {
+      "sessionId": "assessment-session-001",
+      "userId": "7",
+      "questionVersionId": "assessment-v1",
+      "attemptNo": 1,
+      "status": "ANSWERING_SESSION_STATUS_IN_PROGRESS",
+      "currentQuestionNo": 34,
+      "answeredCount": 33,
+      "startedAtMs": "1700000000000",
+      "completedAtMs": "0",
+      "restartedFromSessionId": ""
+    },
+    "questions": [
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 34,
+        "questionText": "服务端第三十四题",
+        "totalQuestions": 144,
+        "choices": [
+          {
+            "choiceValue": 20,
+            "choiceText": "服务端选项 A"
+          },
+          {
+            "choiceValue": 10,
+            "choiceText": "服务端选项 B"
+          }
+        ]
+      }
+    ],
+    "savedAnswers": [
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 1,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000001000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 2,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000002000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 3,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000003000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 4,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000004000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 5,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000005000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 6,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000006000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 7,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000007000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 8,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000008000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 9,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000009000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 10,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000010000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 11,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000011000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 12,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000012000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 13,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000013000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 14,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000014000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 15,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000015000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 16,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000016000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 17,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000017000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 18,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000018000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 19,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000019000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 20,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000020000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 21,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000021000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 22,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000022000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 23,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000023000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 24,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000024000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 25,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000025000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 26,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000026000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 27,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000027000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 28,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000028000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 29,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000029000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 30,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000030000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 31,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000031000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 32,
+        "choiceValue": 10,
+        "answeredAtMs": "1700000032000"
+      },
+      {
+        "questionVersionId": "assessment-v1",
+        "questionNo": 33,
+        "choiceValue": 20,
+        "answeredAtMs": "1700000033000"
+      }
+    ]
+  }
+}

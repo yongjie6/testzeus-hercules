@@ -1,0 +1,26 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "conversationRelationships": [
+      {
+        "conversationRelationshipId": "relationship-untagged-001",
+        "candidateRelationshipId": "candidate-untagged-001",
+        "targetUser": {
+          "userId": "22",
+          "nickname": "无标签好友",
+          "userInfoCompleted": true
+        },
+        "setting": {
+          "remarkName": "无标签好友",
+          "tagText": ""
+        },
+        "latestChatId": "chat-relationship-untagged",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000000000",
+        "activatedAtMs": "1700000000000",
+        "latestChatSummary": "最近聊过工作上的事"
+      }
+    ]
+  }
+}

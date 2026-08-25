@@ -1,0 +1,24 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/report",
+  "queryExpect": {
+    "reportType": "external_v1"
+  },
+  "response": {
+    "report": {
+      "reportId": "report-external-counterpart-001",
+      "resultId": "result-counterpart-001",
+      "reportVersion": "1",
+      "status": "REPORT_STATUS_READY",
+      "reportType": "external_v1",
+      "subjectUserId": "8",
+      "viewed": false,
+      "viewedAtMs": "0",
+      "createdAtMs": "1700000000000",
+      "updatedAtMs": "1700000000000",
+      "contentFeedbacks": [],
+      "reportStatusWhenViewed": "REPORT_STATUS_UNSPECIFIED",
+      "reportContent": "{\"meta\": {\"report_type\": \"external_v1\", \"report_version\": 1}, \"content\": \"## 对方报告\\n\\n这是一份用 Markdown 撰写的对外报告正文。\"}"
+    }
+  }
+}

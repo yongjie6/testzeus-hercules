@@ -21,26 +21,66 @@
 **1. mock 网关**
 
 ```bash
-cd <miniapp>/fe_app/packages/e2e && ./node_modules/.bin/tsx <此目录>/gateway.mts
+cd <miniapp>/packages/e2e && ./node_modules/.bin/tsx <此目录>/gateway.mts
 ```
 
-端口 39100/39101 是**编译进小程序包里的**，不能改。`gateway.mts` 用的是 e2e 那套 `startGateway` + `loadMergedFixture`，只是常驻运行——他们的 `test-env.ts` 每次 vitest 跑完就拆掉网关，那个生命周期和 Hercules 对不上。
+端口 39100/39101 是**编译进小程序包里的**，不能改。`gateway.mts` 用的是 e2e 那套 `startGateway` + fixture 加载器，只是常驻运行——他们的 `test-env.ts` 每次 vitest 跑完就拆掉网关，那个生命周期和 Hercules 对不上。
+
+**读哪个 checkout 由 `MINIAPP_REPO` 决定**，默认 `../../../mini/esm_fe_app`。这里踩过一次：它原先硬编码指向 `mini/esm_mini_app/fe_app`，那是**同一个仓库的另一个 checkout**，停在 v2 时代的分支上。开发者工具换成 v3.0 的包之后，就变成 v3.0 的 app 配 v1 的 fixture，页面照常渲染、数据全错、没有任何地方报错。启动日志第一行现在会打印实际读的路径，跑之前扫一眼。
 
 常驻也意味着它得能换数据：vitest 那边每条 TC 起一个新网关来加载自己的 fixture，这里换不了进程，所以 `gateway.mts` 另开一个控制端口（默认 39102，`GATEWAY_CTRL_PORT`）就地换：
 
 ```bash
-curl -s http://127.0.0.1:39102/fixture                              # 当前场景 + 全部可选场景
-curl -sX POST http://127.0.0.1:39102/fixture -d '{"scene":"TC-QUOTA-001"}'
+curl -s http://127.0.0.1:39102/fixture
 ```
 
-`mp_use_fixture` 调的就是它。场景名写错会直接报错并列出可选值，不会静默退回 base。控制端口只监听 127.0.0.1。
+```bash
+curl -sX POST http://127.0.0.1:39102/fixture -d '{"scenes":["state-scale-done","state-report-ready"]}'
+```
+
+名字按顺序**深合并**上去，见 [fixtures/README.md](fixtures/README.md)。`{"scene":"TC-XXX"}` 的旧写法仍然接受。`mp_use_fixture` 调的就是它。名字写错会直接报错并列出可选值，不会静默退回 base。控制端口只监听 127.0.0.1。
+
+控制端口还有三条给用例用的路由：
+
+| 路由 | 用途 |
+| --- | --- |
+| `GET /calls` | 应用实际请求过哪些接口，以及**哪些没有 fixture 覆盖** |
+| `POST /ws/push` | 往应用推一条 WS 事件，`mp_ws_push` 用 |
+| `POST /ws/disconnect` | 断掉应用的 WS 连接，`mp_ws_disconnect` 用 |
+
+`GET /calls` 是排查空白页的第一站。`base/proto/defaults.json` 给**每一个** proto 路由都种了一个只有 `baseResp` 的空响应，所以没被 fixture 覆盖的接口不会 404，而是返回成功加一个空 body——页面转圈或提示重试，但没有任何地方指出是哪个调用回来是空的。`uncovered` 字段直接给出这份名单。
+
+WS 那两条是转发：网关自己的 `/__push` `/__disconnect` 挂在自签 HTTPS 上，转到明文控制端口，MCP server 就不用处理证书（它由 Hercules 跨 stdio 边界拉起，几乎拿不到环境变量）。
 
 **2. 开发者工具打开 `dist-scenario`**
 
 必须是指向 `https://localhost:39100` 的包。`dist` 指向真实后端，跑不通。
 
-- 用**界面**导入，别用 `cli open`——该产物的 appid 是 `touristappid`，CLI 会报 `不存在此 AppID (code 10)`
-- 详情 → 本地设置 → 勾选**不校验合法域名/TLS/HTTPS 证书**（网关是自签证书，不勾请求全被挡）
+`dist-scenario` 在任何仓库里都不是现成的构建脚本，按 e2e 的 `buildEnvVars` 注入变量自己构建：
+
+```bash
+cd <miniapp>/packages/app && TARO_OUTPUT_ROOT="$(pwd)/dist-scenario" TARO_APP_API_BASE_URL="https://localhost:39100" TARO_APP_WSS_BASE_URL="wss://localhost:39101" TARO_APP_MONITOR_ID="local-e2e" TARO_APP_MONITOR_ENDPOINT="http://localhost:39200/log" TARO_APP_MONITOR_ENABLE_ENDPOINT="false" TARO_APP_USER_AGREEMENT_URL="https://example.com/agreement" TARO_APP_PRIVACY_URL="https://example.com/privacy" TARO_APP_CONTACT_EMAIL="support@example.com" pnpm run build:weapp
+```
+
+v3.0 的产物 appid 是真实的，`cli open` 可以直接打开。**只有 appid 为 `touristappid` 的旧产物**才必须走界面导入——CLI 对它会报 `不存在此 AppID (code 10)`。
+
+**新项目第一次打开后，必须手工勾一次「不校验合法域名」**：详情 → 本地设置 → 勾上「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」。
+
+这一步没有命令行替代。构建产出的 `project.config.json` 里 `setting.urlCheck: false` 不够，往产物里补一个
+
+```json
+{ "setting": { "urlCheck": false } }
+```
+
+的 `project.private.config.json` 也不够——开发者工具按项目路径记住这个本地设置，一个从没被勾过的新路径照样拦。漏了这一步的现象很有迷惑性：**开发者工具在渲染、自动化连得上、截图正常，但小程序发出的每个请求都被拦在本地**，网关一条请求都收不到。页面于是停在「正在加载…」「当前无法进入，请稍后重试」，「我的」页显示「登录/注册」而不是昵称——看起来像 fixture 不对，实际一个字节都没出去。
+
+确认它真的通了（应当返回 `statusCode: 200`，而不是 `request:fail url not in domain list`）：
+
+```bash
+curl -s http://127.0.0.1:39102/calls
+```
+
+跳几个页面之后这里应该列出应用请求过的接口；一直是空的就说明域名校验还开着。
 
 **3. 自动化会话**
 
@@ -49,6 +89,12 @@ curl -sX POST http://127.0.0.1:39102/fixture -d '{"scene":"TC-QUOTA-001"}'
 ```
 
 别重复起——多个会话抢同一端口会让行为变得不确定。
+
+**换项目时要先关掉旧的。** `cli open` 只是在界面上打开新项目，**不会重绑已有的自动化会话**：9420 会继续连着上一个项目，对它重跑 `cli auto` 照样报成功但不生效，`mp_navigate` 于是在旧包的路由表上跑。先释放端口再重绑：
+
+```bash
+/Applications/wechatwebdevtools.app/Contents/MacOS/cli close --project <旧的 dist-scenario>
+```
 
 ### 验证
 
@@ -81,7 +127,7 @@ MCP_SERVERS=mcp_servers.json
 MCP_TIMEOUT=30
 
 WXMP_WS_ENDPOINT=ws://localhost:9420
-WXMP_FIXTURE_DEFAULTS=<miniapp>/fe_app/packages/e2e/tests/fixtures/base/defaults/defaults.json
+WXMP_FIXTURE_DEFAULTS=<miniapp>/packages/e2e/tests/fixtures/base/defaults/defaults.json
 WXMP_GATEWAY_CONTROL=http://127.0.0.1:39102
 WXMP_PROOF_DIR=opt/proofs
 ```
@@ -108,7 +154,7 @@ WXMP_PROOF_DIR=opt/proofs
 登录态直接复用 e2e 的 fixture：
 
 ```bash
-WXMP_FIXTURE_DEFAULTS=<miniapp>/fe_app/packages/e2e/tests/fixtures/base/defaults/defaults.json
+WXMP_FIXTURE_DEFAULTS=<miniapp>/packages/e2e/tests/fixtures/base/defaults/defaults.json
 ```
 
 `mp_login_as` 照搬 `tests/utils/storage.ts` 的 `primeStorageFromFixture`：清空 storage → 写 `esm_tokens` 和 `esm_user`（两个都是**对象**，不是字符串）→ reLaunch 到首页。
@@ -122,10 +168,10 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 | 工具 | 用途 |
 | --- | --- |
 | `mp_snapshot` | **看见页面**：可见文案 + 控件 + 可操作的 id |
-| `mp_navigate` | 命名路由跳转（login/home/chat/mine/…），自动选 switchTab 还是 reLaunch |
+| `mp_navigate` | 命名路由跳转（启动页/首页/对话/我的/量表/报告/…），自动选 switchTab 还是 reLaunch |
 | `mp_tap_text` | 按可见文案点击，对齐 getByText |
 | `mp_login_as` | `logged-in` / `guest` 前置态 |
-| `mp_use_fixture` | 换后端数据场景（额度用尽、token 过期、接口报错…），**要在 `mp_login_as` 之前调** |
+| `mp_use_fixture` | 设后端数据状态，多个名字可组合（见 [fixtures/README.md](fixtures/README.md)），**要在 `mp_login_as` 之前调** |
 | `mp_swipe` | 手势，带 `until` 会重试到目标文案出现 |
 | `mp_long_press` | 按住不放，`duration` 控制时长（微信 350ms 起算长按），`until` 同上 |
 | `mp_trigger` | 发组件事件；输入框用 `into`（placeholder）定位，它自己没有文案 |
@@ -135,15 +181,64 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 | `mp_page_data` / `mp_call_method` | 页面 data / 调 Page 方法 |
 | `mp_set_storage` / `mp_get_storage` / `mp_clear_storage` | storage 读写清 |
 | `mp_mock_wx` / `mp_restore_wx` | mock wx API |
+| `mp_ws_push` / `mp_ws_disconnect` | 按时刻驱动 WS 流事件、断连，见下方「流事件」 |
 | `mp_wait` / `mp_screenshot` | 等待 / 截图存证 |
 | `mp_visual_check` | 把当前画面交给视觉模型回答一个问题，**看快照看不到的东西** |
 | `mp_visual_compare` | 和基准图比对，用于视觉回归 |
 | `mp_webview_url` | 读 web-view 的 src，桥接到浏览器测试 |
 | `mp_evaluate` | 逃生舱，逻辑层执行 JS |
 
-**优先用 `mp_snapshot` + `mp_tap_text` + 命名路由**，对齐 `fe_app/packages/e2e/tests/AGENTS.md` 的「像用户一样」原则：按可见文案和角色定位，不依赖 class/属性/顺序号。`mp_tap(selector)` 这类按选择器的工具是兜底，正常用例里不该出现。
+**优先用 `mp_snapshot` + `mp_tap_text` + 命名路由**，对齐 `<miniapp>/packages/e2e/tests/AGENTS.md` 的「像用户一样」原则：按可见文案和角色定位，不依赖 class/属性/顺序号。`mp_tap(selector)` 这类按选择器的工具是兜底，正常用例里不该出现。
 
 选择器是 **WXML 选择器**，不是浏览器 DOM 的 CSS 选择器。
+
+## 命名路由
+
+`mp_navigate` 接受中文名（启动页 / 首页 / 对话 / 我的 / 信息采集 / 量表 / 测量结果 / 个人报告 / 他人报告 / 注销账号 / 隐私政策 / 用户协议）、英文 key，或以 `/` 开头的绝对路径。
+
+**路径不是写死的，是启动时从装载的包里读出来的。** 它原先是一张对着 `test-router.ts` 抄的静态表，换个版本的包就整体失效且不报错：v3.0 把 home 从 `/pages/index/index` 挪到 `/features/home/pages/index`，用启动页替掉了登录页，`luxx_test` 改名 `assessment`，底部 tab 从三个减到两个——于是跳「对话」还在对一个已经不是 tab 的页面调 `switchTab`。
+
+现在改成读 `__wxConfig`：页面列表和 tabBar 都由包自己提供，`switchTab` 还是 `reLaunch` 也据此判断。每个名字配一组候选路径（新版在前），命中包里存在的那个。所以同一个 server 对 v1 和 v3 的包都成立，**开着哪个包就导航哪个包**。
+
+包里没有对应页面时报错会说清楚是版本对不上，并列出这个包实际有哪些页面：
+
+```
+"量表" is a known route, but this bundle has no page for it -- looked for
+features/assessment/pages/index or features/luxx_test/pages/index. The project
+open in DevTools is probably a different version of the app than the case expects.
+```
+
+加新页面就在 `server.js` 的 `ROUTE_CANDIDATES` 里加一条候选，中文名加进 `ROUTE_ALIASES`。
+
+## 流事件
+
+绝大多数「后端状态」类前置都是 fixture 的事——包括故障和时序注入，`RouteOverride` 上的
+`delayMs`、`responseSequence`、`stream.chunks` / `stream.intervalMs` 就够了（见
+[fixtures/README.md](fixtures/README.md)）。
+
+有一类不行：断言的对象是**事件到达的时刻和顺序**，不是某个响应的内容。同一个 `event_id`
+投递两次、只推增量不推落库、先增量后快照、同一轮按序推完整套事件——fixture 描述的是一个
+响应，不是一个时刻。这类用 `mp_ws_push` 一条一条驱动：
+
+```
+mp_ws_push({"event_id":"e1","chat_id":"<id>","generation_id":"gen-1","seq_id":"0",
+            "event_type":"CHAT_STREAM_EVENT_TYPE_ASSISTANT_DELTA","delta":"你"})
+```
+
+信封是 snake_case（它是 on-wire 结构）。`event_type` 取
+`CHAT_STREAM_EVENT_TYPE_` 加 `ASSISTANT_DELTA` / `MESSAGE_SNAPSHOT` / `COMPLETED` /
+`FINAL_MESSAGE_COMMITTED` / `BLOCKED` / `FAILED` / `HEARTBEAT` / `SUBSCRIBED` /
+`RECOMMENDED_QUESTIONS_READY`。一轮之内 `generation_id` 保持一致，`event_id` 各不相同
+（除非用例要的就是重复投递）。
+
+两个容易踩的点：
+
+**订阅时机**——应用在会话页打开时就订阅，不需要先发消息。没有订阅时推送会被网关接受然后送给
+零个客户端，用例接着在几步之外的一个「气泡没出现」上失败。`mp_ws_push` 因此先查连接数，
+没连上直接报错。
+
+**id 要对上**——`chat_id` 和 `generation_id` 必须是当前打开的那个会话的，先从页面上读出来。
+推一个属于别的会话的事件，网关照样投递、应用照样忽略，现象和「应用没处理这个事件」一模一样。
 
 ## 跑小程序时关掉浏览器
 

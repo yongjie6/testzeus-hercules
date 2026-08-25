@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "canCreateRelationshipShare": true
+  }
+}
