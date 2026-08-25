@@ -1,0 +1,74 @@
+# 被测对象：ESM V3.0 小程序服务端接口（esm-miniapp-gateway）
+
+本套件测的是 HTTP 接口，不是页面。不要打开浏览器，也不要驱动小程序。
+
+契约真源：
+- 方法与路径：idl/esm/v1/esm_gateway.proto
+- 资料、首页、报告结构：idl/esm/v1/esm_profile.proto
+- 业务错误码：idl/error_code_esm.go
+- 调用顺序说明：openspec/changes/add-esm-v21-backend/frontend_api_flow.md
+
+## 工具路由
+
+target_helper 固定用 api。本套件只用这四个工具：
+
+- `esm_new_user`：建一个全新测试用户当前置条件。
+- `esm_call`：调一个网关接口，返回断言要看的字段。
+- `esm_wait_report`：等 Agent 把报告写回。
+- `esm_wait_chat_reply`：等助手回复落库。
+
+不要用 `generic_http_api`，也不要用 open_url、click、get_page_text 这些浏览器工具。
+`generic_http_api` 不会带泳道头、不会补 baseReq、也不会带登录态，用它必然拿不到正确结果。
+
+## 判定口径
+
+网关对业务失败也返回 HTTP 200，成败不体现在 HTTP 状态码上。
+
+- 成功：`statusCode == "0"`
+- 失败：`statusCode != "0"`，具体原因看 `bizCodeName`
+
+断言只看 `statusCode` 和 `bizCodeName`，不要用 `httpStatus` 判断成败。
+
+## JSON 约定
+
+对外 JSON 走 protojson：
+
+- 字段名是 lowerCamelCase，例如 `userInfoCompleted`、`entryStage`。
+- int64 序列化成字符串，例如 `"54109"`、`"0"`。传参时也传字符串。
+- 枚举传全名字符串，例如 `GENDER_MALE`、`AVATAR_SOURCE_WECHAT`。
+
+`esm_call` 返回的 `body` 是响应里除 `baseResp` 外的全部内容，用例里写的
+`body.xxx` 就按这个结构取。
+
+## 本模块接口
+
+| 接口 | 方法和路径 |
+|---|---|
+| GetMiniappRuntimeState | GET /api/esm/v1/runtime/state |
+| LoginByWeChatCode | POST /api/esm/v1/auth/wechat/login |
+| LoginOrRegisterByWeChatPhone | POST /api/esm/v1/auth/wechat-phone/login |
+| RefreshToken | POST /api/esm/v1/auth/token/refresh |
+| Logout | POST /api/esm/v1/auth/logout |
+| GetMe | GET /api/esm/v1/user/me |
+| UpdateUserInfo | POST /api/esm/v1/user/info |
+| GetHomeState | GET /api/esm/v1/home/state |
+
+## 常用枚举
+
+- `HomeEntryStage`：HOME_ENTRY_STAGE_COMPLETE_USER_INFO / HOME_ENTRY_STAGE_ANSWERING / HOME_ENTRY_STAGE_HOME
+- `Gender`：GENDER_UNSPECIFIED / GENDER_MALE / GENDER_FEMALE / GENDER_OTHER
+- `AvatarSource`：AVATAR_SOURCE_WECHAT / AVATAR_SOURCE_UPLOAD
+- `UserInfoAuditStatus`：USER_INFO_AUDIT_STATUS_NOT_REQUIRED / USER_INFO_AUDIT_STATUS_PASSED / USER_INFO_AUDIT_STATUS_REJECTED
+
+## 环境说明
+
+默认打测试环境泳道 `feat-esm-v3-0`，由 `ESM_BASE_URL` / `ESM_LANE` 控制，工具会自动带上
+`lane`、`x-lane` 和 `X-Product-ID` 头。
+
+微信两段 code 换登录态是真实小程序链路，自动化拿不到有效 code；`esm_new_user` 走测试环境
+的手机号注册拿同一套 token，网关只从 token 解析 uid，对网关侧契约等价。所以本套件里凡是
+需要登录态的用例，都用 `esm_new_user` 建用户，只有专门测微信 code 校验的用例才直接调
+微信登录接口并断言失败错误码。
+
+可展示头像 URL 固定用：
+https://daqian-bullet-demo.tos-cn-beijing.volces.com/tests/player_01_19233_selected.jpg

@@ -1,0 +1,60 @@
+# 被测对象：ESM V3.0 小程序服务端场景化串联（跨 gateway / assessment / profile / chat）
+
+本套件测的是 HTTP 接口串起来的完整用户链路，不是页面。不要打开浏览器，也不要驱动小程序。
+
+契约真源：
+- idl/esm/v1/esm_gateway.proto、esm_assessment.proto、esm_profile.proto、esm_chat.proto
+- idl/error_code_esm.go
+- openspec/changes/add-esm-v21-backend/frontend_api_flow.md（总流程时序图 + §1 到 §7）
+- openspec/changes/add-esm-v21-backend/tech_design.md（答题到报告状态流、关系链路）
+
+单接口的参数边界和错误码在 esm-gateway / esm-assessment / esm-profile / esm-chat 四个套件里
+逐个覆盖。本套件只管一件事：把接口按真实调用顺序串起来，验证跨服务的状态推进是对的。
+
+## 工具路由
+
+target_helper 固定用 api。本套件用这五个工具：
+
+- `esm_new_user`：开一个新账号当链路起点。
+- `esm_call`：链路上的每一次接口调用。
+- `esm_finish_assessment`：把当前用户剩下的题答完（144 题逐题提交，约 3 分钟）。
+- `esm_wait_report`：等 Agent 把报告写回。
+- `esm_wait_chat_reply`：等助手回复落库。
+
+不要用 `generic_http_api`，也不要用浏览器工具。
+
+## 判定口径
+
+网关对业务失败也返回 HTTP 200。
+
+- 成功：`statusCode == "0"`
+- 失败：`statusCode != "0"`，具体原因看 `bizCodeName`
+
+## JSON 约定
+
+- 字段名 lowerCamelCase，int64 是字符串，枚举传全名字符串。
+
+## 链路顺序
+
+小程序主链路是：
+
+运行时状态 → 登录 → 首页状态 → 资料填写 → 答题 → 量表结果 → 报告 → 已读/反馈
+→ 自己的对话 → 推荐问题
+
+关系链路是：
+
+A 完成量表 → A 创建分享 → B 从分享进入并完成量表 → 绑定分享 → 双方候选关系
+→ A 进入关系对话（占席位）→ 两条初始化消息 → 关系选择卡片 → 关系对话
+
+`entryStage` 是服务端算好的入口阶段，三个取值依次对应资料填写、答题、首页：
+`HOME_ENTRY_STAGE_COMPLETE_USER_INFO`、`HOME_ENTRY_STAGE_ANSWERING`、`HOME_ENTRY_STAGE_HOME`。
+
+## 成本
+
+本套件的用例都要现做量表。单人链路单条大约 4 分钟，双人链路单条大约 7 分钟。
+排期跑之前先算清楚总时长。
+
+## 环境说明
+
+默认打测试环境泳道 `feat-esm-v3-0`，由 `ESM_BASE_URL` / `ESM_LANE` 控制。
+当前泳道题库是本地开发题库，接的是真实模型，助手回复正文不可预期，断言只看结构和状态。

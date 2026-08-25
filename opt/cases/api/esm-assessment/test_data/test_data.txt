@@ -1,0 +1,59 @@
+# 被测对象：ESM V3.0 答题与量表结果接口（esm-assessment，经 esm-miniapp-gateway 暴露）
+
+本套件测的是 HTTP 接口，不是页面。不要打开浏览器，也不要驱动小程序。
+
+契约真源：
+- 方法与路径：idl/esm/v1/esm_gateway.proto
+- 答题结构：idl/esm/v1/esm_assessment.proto
+- 业务错误码：idl/error_code_esm.go
+- 调用顺序说明：openspec/changes/add-esm-v21-backend/frontend_api_flow.md §4 §5
+
+## 工具路由
+
+target_helper 固定用 api。本套件只用 `esm_new_user` 和 `esm_call`。
+
+不要用 `generic_http_api`，也不要用浏览器工具。`generic_http_api` 不会带泳道头、不会补
+baseReq、也不会带登录态。
+
+## 判定口径
+
+网关对业务失败也返回 HTTP 200。
+
+- 成功：`statusCode == "0"`
+- 失败：`statusCode != "0"`，具体原因看 `bizCodeName`
+
+## JSON 约定
+
+- 字段名 lowerCamelCase，int64 是字符串（`"1"`、`"0"`），枚举传全名字符串。
+- `questionNo` 和 `choiceValue` 是 int32，传数字。
+
+## 本模块接口
+
+| 接口 | 方法和路径 |
+|---|---|
+| StartOrResumeAnswering | POST /api/esm/v1/answering/start-or-resume |
+| SubmitAnswer | POST /api/esm/v1/answering/answer |
+| RestartAnswering | POST /api/esm/v1/answering/restart |
+| GetLatestScaleResult | GET /api/esm/v1/result/latest |
+
+## 答题规则
+
+- 题号范围 1 到 144，选项值范围 1 到 6。
+- 答案必须按题号推进：只能提交已答过的题（改答）或当前题 `session.currentQuestionNo`。
+  跳答还没到的题号会被判成题号非法。
+- 提交与已保存答案完全相同的选项，按幂等成功处理：`answerVersion` 不递增，
+  `modified` 不置 true，`answeredAtMs` 不变。
+- 改答已答题：`answerVersion` 递增，`modified` 置 true，后面已答的题不会被清掉。
+- 第 144 题通过完整性检查后 `completed` 为 true 并返回 `resultId`。
+- `RestartAnswering` 必须带 `confirmed: true`。
+
+## 前置条件成本
+
+`esm_new_user` 带 `with_scale_result` 会连答 144 题，单次大约 3 分钟。只有断言真的需要
+量表结果时才这么建用户；只测答题过程的用例用「填资料、不做量表」的用户即可。
+
+## 环境说明
+
+默认打测试环境泳道 `feat-esm-v3-0`，由 `ESM_BASE_URL` / `ESM_LANE` 控制。
+当前泳道题库是本地开发题库，题干形如「本地开发占位题目 001」，量表标题是
+「ESM 本地开发量表」，维度共 16 个。断言维度数量和标题时按这套题库判断。

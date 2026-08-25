@@ -1,0 +1,63 @@
+# 被测对象：微信小程序（小量动机）
+
+本项目测试的是微信小程序，不是网页。
+
+## 工具路由
+
+默认所有页面操作走 MCP 工具，工具名以 mmcp_wxmp_ 开头，target_helper 用 mcp。
+
+浏览器工具（open_url、click、get_interactive_elements、get_page_text、geturl 等）
+对小程序页面无效，不要用它们打开或操作小程序页面。
+
+截图和视觉断言也走 MCP，不走浏览器：
+- mmcp_wxmp_mp_screenshot 存证
+- mmcp_wxmp_mp_visual_check 回答关于画面的问题
+- mmcp_wxmp_mp_visual_compare 比对基准图
+
+planner 的能力表把「visual validation」归给 browser helper，那一条在本项目不成立：
+这里没有可用的浏览器上下文，浏览器截到的是空白页，不是小程序画面。
+所以步骤里出现「在截图上确认…」「与基准图…一致」「看画面」时，
+target_helper 依然必须是 mcp，绝不要因为它是视觉判断就切到 browser。
+
+唯一例外：小程序内嵌 web-view 的 H5 页面。web-view 内部是独立的浏览器上下文，
+MCP 工具够不到。这种情况先用 mmcp_wxmp_mp_webview_url 读出真实 URL，
+再交给浏览器工具去测那个 URL。
+
+## 操作方式
+
+1. 每条用例开始，先用 mmcp_wxmp_mp_login_as 设置前置态：
+   - logged-in：已登录用户（Neo）
+   - guest：未登录
+   不要去驱动登录界面，微信授权弹窗是原生 UI，自动化点不到。
+
+2. 跳转页面用 mmcp_wxmp_mp_navigate，传路由名而不是路径。
+   可用：首页 / 对话 / 我的 / 登录 / 量表 / 注销账号
+   （英文名 home / chat / mine / login / luxxTest / unregister 同样可用）
+
+3. 不确定页面上有什么时，先用 mmcp_wxmp_mp_snapshot 查看。
+   它会列出当前页所有可见文案和控件。
+
+4. 点击用 mmcp_wxmp_mp_tap_text，传可见文案（例如"退出登录"）。
+   不要用 CSS 选择器或 class 名。
+
+5. 断言基于 mmcp_wxmp_mp_snapshot 的输出判断文案是否存在。
+
+## 环境说明
+
+后端是 mock 网关，数据来自固定 fixture。已登录用户：昵称 Neo，用户ID user-001。
+
+## v3.0 用例的前置数据
+
+v3.0 用例需要的首页状态是可组合的片段，用 `mp_use_fixture` 在 `mp_login_as` **之前**
+叠加。跟本套件相关的：
+
+- `state-profile-incomplete` / `state-scale-none`：资料未填 / 资料填完但未做量表——
+  要看冷启动落点，从「启动页」导航进去，不要直接 reLaunch 到首页，否则不会触发落点判断
+- `state-candidate-1`：候选关系 1 条
+- `TC-HOME-001/snapshot`（前端已发布，注意路径带 `/`）：关系对话 1 条，已设标签和备注
+- `state-can-share`：`canCreateRelationshipShare` 置 true（`base` 默认是 false）
+- `state-global-degraded`：`runtime/state` 的降级开关已打开——**前端目前没有读这个字段
+  的代码，配它的用例现在测不出东西**，写之前先确认这块 UI 是否已经补上
+
+完整片段列表和组合方式、以及上面这两条已知空白的细节，见
+`mcp_servers/wxmp/fixtures/README.md`。

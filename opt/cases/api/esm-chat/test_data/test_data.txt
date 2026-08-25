@@ -1,0 +1,95 @@
+# 被测对象：ESM V3.0 对话接口（esm-chat，经 esm-miniapp-gateway 暴露）
+
+本套件测的是 HTTP 接口，不是页面。不要打开浏览器，也不要驱动小程序。
+
+契约真源：
+- 方法与路径：idl/esm/v1/esm_gateway.proto
+- 对话结构：idl/esm/v1/esm_chat.proto
+- 业务错误码：idl/error_code_esm.go
+- 调用顺序说明：openspec/changes/add-esm-v21-backend/frontend_api_flow.md §7
+
+## 工具路由
+
+target_helper 固定用 api。本套件用 `esm_new_user`、`esm_call`、`esm_wait_report`、
+`esm_wait_chat_reply` 和 `esm_risk_sample`。
+
+不要用 `generic_http_api`，也不要用浏览器工具。
+
+## 判定口径
+
+网关对业务失败也返回 HTTP 200。
+
+- 成功：`statusCode == "0"`
+- 失败：`statusCode != "0"`，具体原因看 `bizCodeName`
+
+## JSON 约定
+
+- 字段名 lowerCamelCase，int64 是字符串（`seqId` 是 `"1"` 这种），枚举传全名字符串。
+
+## 本模块接口
+
+| 接口 | 方法和路径 |
+|---|---|
+| CreateChat | POST /api/esm/v1/chat/create |
+| StartRelationshipChat | POST /api/esm/v1/relationship-chat/start |
+| SendChatMessage | POST /api/esm/v1/chat/message/send |
+| StopChatGeneration | POST /api/esm/v1/chat/generation/stop |
+| EditAndResendChatMessage | POST /api/esm/v1/chat/message/edit-resend |
+| RegenerateChatMessage | POST /api/esm/v1/chat/message/regenerate |
+| GetChatDetail | GET /api/esm/v1/chat/detail |
+| GetRecommendedQuestionCard | GET /api/esm/v1/chat/recommended-question-card |
+| UseRecommendedQuestion | POST /api/esm/v1/chat/recommended-question/use |
+| ListChats | GET /api/esm/v1/chats |
+| RenameChat | POST /api/esm/v1/chat/rename |
+| DeleteChat | POST /api/esm/v1/chat/delete |
+| GetMessagesAfterSeq | GET /api/esm/v1/chat/messages-after-seq |
+| FeedbackMessage | POST /api/esm/v1/chat/message/feedback |
+
+## 领域规则
+
+- 自己的对话用 `CreateChat`，`chatKind` 传 `CHAT_KIND_SELF`；关系对话用
+  `StartRelationshipChat`，不能用 `CreateChat` 建。
+- 每次发送都带 `clientRequestId`。同一个值重发同样的内容按幂等成功处理；同一个值换内容
+  返回 `BIZ_ESM_CHAT_CLIENT_REQUEST_CONFLICT`。
+- 一轮的服务端顺序是：输入审核、生成、输出审核、最终助手消息落库。落库前同一对话不接受
+  下一条。`turnStatus`、`auditStage`、`replySource` 分别表达当前轮状态、审核阶段和回复来源。
+- 流式增量走 WebSocket，最终内容以落库消息为准。本套件不测 WebSocket，用
+  `GetMessagesAfterSeq` 读落库结果，也就是前端断线重连的补偿读取路径。
+- `seqId` 是已落库消息序号，助手回复落库后才推进。
+- 首次进入关系对话，服务端按顺序推两条初始化消息：固定开场白，然后是对方报告。
+- 关系选择卡片提交时 `relationshipInputResponse` 传 true；选项型同时带
+  `relationshipTypeSelection`，服务端按关系类型树校验。
+- 推荐问题是旁路卡片，最终助手消息落库后异步生成，通过
+  `GetChatDetail.activeRecommendedQuestionCard` 或 `GetRecommendedQuestionCard` 读取。
+- 删除会话只影响当前用户的会话列表可见性。
+
+## 前置条件成本
+
+自己的对话需要一个有量表结果的用户（`with_scale_result`，约 3 分钟）。关系对话需要两个
+有量表结果的用户并先建好候选关系（约 6 分钟）。
+
+## 环境说明
+
+默认打测试环境泳道 `feat-esm-v3-0`，由 `ESM_BASE_URL` / `ESM_LANE` 控制。
+当前泳道接的是真实模型，助手回复内容不可预期，断言只看结构、状态和来源，不要断言正文文案。
+
+**风控用例是这条规则唯一的例外**（TC-ESM30-CH-17/18/19）：那三条断言的不是模型自由发挥的
+回复，是产品写死的固定兜底话术、或 PRD 明文规定必须出现的两条热线号码/名称——这些是契约，
+不是模型输出，断言正文文案在这里是对的。
+
+## 风控用例的前置数据
+
+心理安全（TC-ESM30-CH-17）只用 prompt 处理，不接外部审核系统，PRD 给出的自伤倾向样例语料
+本身是安全的，直接写在了 feature 文件里。
+
+政治安全（TC-ESM30-CH-18/19）接的是真实的外部审核系统，会稳定命中的语料只能由风控/安全团队
+提供，不能写进仓库——写死一句真会触发外部审核的文本，等于把"已知能骗过审核系统"的样本发布
+出去。这两条用例通过 `esm_risk_sample` 在运行时从环境变量取语料：
+
+```
+ESM_RISK_SAMPLE_POLITICAL_INPUT   # 输入侧命中：第一道审核就应该拦
+ESM_RISK_SAMPLE_POLITICAL_OUTPUT  # 输出侧命中：能骗过第一道，诱导模型给出应被第二道拦下的回复
+```
+
+不设就直接报错说明原因，不会静默跳过或用占位内容代替。要跑这两条，先找风控/安全团队要
+一份当前配置下确实会命中的样例。

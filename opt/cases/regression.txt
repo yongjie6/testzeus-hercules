@@ -1,0 +1,24 @@
+# 核心回归集：每次发版都要跑的用例，从各版本里手工挑选
+# 格式：<类型>/<模块> :: <Scenario 标题子串>
+# 用 TC ID 匹配而不是描述文案，改标题不会打断清单
+# 类型：api（接口）/ web（浏览器）/ mp（小程序）
+#
+# 分类型跑：./run-version.sh regression mp
+# 匹配不到的条目会直接报错中止——回归集悄悄少一条，报告照样是绿的。
+
+# --- 小程序页面（需要开发者工具常驻 + mock 网关在跑） ---
+mp/nav  :: TC-ESMV1-007-L1-0
+mp/nav  :: TC-ESMV1-007-L1-1
+mp/mine :: TC-ESMV1-028-L1-3
+
+# --- ESM V3.0 服务端接口（需要 ESM_LANE 指向部署了 v3.0 的泳道） ---
+# 这里只挑不用现做量表的用例，跑一轮几分钟；要做量表的用例成本见各套件注释。
+api/esm-gateway    :: TC-ESM30-GW-01
+api/esm-gateway    :: TC-ESM30-GW-02
+api/esm-assessment :: TC-ESM30-AS-01
+api/esm-assessment :: TC-ESM30-AS-04
+api/esm-assessment :: TC-ESM30-AS-08
+api/esm-profile    :: TC-ESM30-PF-01
+api/esm-profile    :: TC-ESM30-PF-04
+api/esm-chat       :: TC-ESM30-CH-01
+api/esm-flow       :: TC-ESM30-FL-03

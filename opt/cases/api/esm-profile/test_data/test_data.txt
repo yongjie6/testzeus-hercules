@@ -1,0 +1,98 @@
+# 被测对象：ESM V3.0 报告与关系接口（esm-profile，经 esm-miniapp-gateway 暴露）
+
+本套件测的是 HTTP 接口，不是页面。不要打开浏览器，也不要驱动小程序。
+
+契约真源：
+- 方法与路径：idl/esm/v1/esm_gateway.proto
+- 报告、分享、候选关系结构：idl/esm/v1/esm_profile.proto
+- 业务错误码：idl/error_code_esm.go
+- 调用顺序说明：openspec/changes/add-esm-v21-backend/frontend_api_flow.md §5 §6
+
+## 工具路由
+
+target_helper 固定用 api。本套件用 `esm_new_user`、`esm_call` 和 `esm_wait_report`。
+
+不要用 `generic_http_api`，也不要用浏览器工具。
+
+## 判定口径
+
+网关对业务失败也返回 HTTP 200。
+
+- 成功：`statusCode == "0"`
+- 失败：`statusCode != "0"`，具体原因看 `bizCodeName`
+
+报告生成中和已完成属于页面内状态，用 `ReportStatus` 表达，不是业务错误。只有别的接口
+因为报告不可用而没法继续时才返回业务错误。
+
+## JSON 约定
+
+- 字段名 lowerCamelCase，int64 是字符串，枚举传全名字符串。
+
+## 本模块接口
+
+| 接口 | 方法和路径 |
+|---|---|
+| GetReport | GET /api/esm/v1/report |
+| MarkReportViewed | POST /api/esm/v1/report/viewed |
+| SubmitReportContentFeedback | POST /api/esm/v1/report/content/feedback |
+| CreateRelationshipShare | POST /api/esm/v1/relationships/share/create |
+| BindRelationshipShare | POST /api/esm/v1/relationships/share/bind |
+| ListCandidateRelationships | GET /api/esm/v1/relationships/candidates |
+| ListRelationshipTypeOptions | GET /api/esm/v1/relationships/type-options |
+| ListRelationshipFixedTags | GET /api/esm/v1/relationships/fixed-tags |
+| UpdateRelationshipSetting | POST /api/esm/v1/relationships/setting |
+| ListConversationRelationships | GET /api/esm/v1/relationships/conversations |
+
+## 领域规则
+
+- 报告由 Agent 异步写回。答完题后报告不会立刻可读，几十秒内陆续变成
+  `REPORT_STATUS_READY`。需要可读报告当前置条件时用 `esm_wait_report`。
+- 当前泳道上的报告类型：`personal_detail_v1`（个人报告）、`personal_dialogue_v1`
+  （对话用）、`external_v1`（给他人看）、`relation_card_v1`（候选关系卡片文案）。
+- 读取报告要校验权限，当前用户只能读自己有权限看的报告。
+- 报告已查看按查看人记录；`READY` 可以标记，`GENERATING` 不可以。
+- 报告模块反馈的粒度是 `userId + reportId + tabTitle + subtitle`，重复提交覆盖同一条记录，
+  `feedbackId` 不变、`updatedAtMs` 变。
+- 分享的 `launchScene` 必须是服务端配好的场景，当前配置里可用的是 `home_invite`。
+- 候选关系要求双方都有量表结果，是无方向关系，双方都能看到对方。
+- 备注名和标签按当前用户维度保存，对方看不到我给他设的备注。固定标签走白名单不进审核，
+  自定义标签在请求内同步审核。
+
+## 前置条件成本
+
+`esm_new_user` 带 `with_scale_result` 会连答 144 题，单次大约 3 分钟。建关系的用例需要
+两个都有量表结果的用户，前置大约 6 分钟。
+
+## 判断"刚刚才写入"用 serverTimeMs，不用本地时钟
+
+`esm_call` 的返回里除了 `body`，还有一个同级字段 `serverTimeMs`——服务端处理这次请求的
+时间。判断某个时间戳字段是不是刚写入时，拿它和同一次响应的 `serverTimeMs` 比较，不要
+拿 harness 本地时间比较：两个数字来自同一台服务器，不受 harness 和后端之间的时钟偏移
+影响（TC-ESM30-PF-19）。
+
+## 已知的契约对不上，写用例前先看
+
+- **报告模块反馈的定位方式**：PRD 描述过 `tab:{tab_index}/subsection:{subsection_index}`
+  这种从零开始的序号方案，但 `esm_profile.proto` 实际的
+  `SubmitReportContentFeedbackRequest`/`ReportContentFeedback` 用的是 `tabTitle` +
+  `subtitle` 两个字符串字段，压根没有序号。这两套描述对不上，本套件按 proto 实际字段
+  写用例（`tabTitle`/`subtitle`），narnia-qa 侧对应的 REQ-ESM-078-02（"反馈路径序号从零
+  开始"）需要按这个事实核对，本套件不写这条断言。
+- **Tab 顺序不是客户端能控制的参数**：调序后反馈是否漂移（narnia-qa REQ-ESM-078-07）
+  没法通过普通接口调用构造前提——Tab 顺序由报告生成的 Agent 决定。该需求自己的 basis
+  也写明这是"有意断言缺陷存在"的观测用例，目标契约（稳定 `tab_id`/`module_id`）还没
+  冻结，本套件不写。
+- **`Unregister` 需要真实微信身份**：`UnregisterRequest` 强制要求 `wechatLoginCode` 和
+  `wechatPhoneCode` 两个真实微信授权码做二次校验，`esm_new_user` 的手机号注册旁路对这个
+  接口不成立——这和"手机号冲突""微信昵称授权"是同一类问题，不是这套工具能造的数据，
+  注销相关的用例（narnia-qa TC-ESM-077 后续影响那几条）本套件不写。
+- **`ReportStatus` 没有失败态**：枚举只有 `UNSPECIFIED` / `GENERATING` / `READY`，没有
+  "生成失败"。narnia-qa 里假设报告会进入失败态的用例（TC-ESM-058 部分子项）在当前契约下
+  前提不成立。
+- **"报告部分就绪""内容全被过滤"这类状态需要故障注入**，和政治安全命中语料是同一类
+  问题——真实场景，但普通接口调用构造不出来，本套件不写；参见 esm-chat 套件的
+  `esm_risk_sample` 处理政治安全命中语料的方式，如果之后要补这几条，思路可以照搬。
+
+## 环境说明
+
+默认打测试环境泳道 `feat-esm-v3-0`，由 `ESM_BASE_URL` / `ESM_LANE` 控制。
