@@ -140,7 +140,8 @@ dmypy.json
 **/temp
 **/log_files
 **/screen_shots
-**/opt
+**/opt/*
+!**/opt/cases
 **/output
 **/gherkin_files
 
@@ -163,6 +164,7 @@ testzeus-hercules/**/*.feature
 **/output_txt
 **/installation_id.txt
 **/additional_tools/*
+!**/additional_tools/*.py
 **/bugreport*
 **/node_modules
 **/*.db
