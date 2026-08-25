@@ -1,0 +1,42 @@
+# CI 运行镜像：api 和 web 用例的执行环境。
+#
+# 和根目录 Dockerfile 的区别：那个是发布 Hercules 这个工具本身用的，ENTRYPOINT 直接跑
+# 一次测试；这个是给 GitLab Runner 当 job 镜像用的，不设 ENTRYPOINT，只把依赖装好。
+#
+# 依赖预装进镜像而不是每次 job 里 uv sync，是因为 E2E 是发布链路上的一环——Jenkins 在
+# 等它的结果，等的时间里 test 环境的 Lease 一直被占着。一次 uv sync + playwright install
+# 要几分钟，摊在每次发布上不划算。
+#
+# 只装 chromium。api 用例不开浏览器，web 用例目前也只跑 chromium；firefox 和 webkit
+# 会让镜像大出一倍多，等真有用例需要再加。
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_LINK_MODE=copy \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    # HF_HOME 不设的话 tokenizer 缓存会往 $HOME 写；runner 上 HOME 不一定可写。
+    HF_HOME=/opt/hf \
+    TOKENIZERS_PARALLELISM=false
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git curl ca-certificates \
+      gcc python3-dev build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install uv
+
+WORKDIR /app
+
+# 只先拷依赖清单，让 uv sync 这一层能被 Docker 缓存住：改用例、改脚本都不该触发重装。
+COPY pyproject.toml uv.lock README.md ./
+COPY testzeus_hercules/__init__.py testzeus_hercules/__init__.py
+RUN uv sync --frozen --no-install-project
+
+# playwright install --with-deps 会 apt-get 一堆系统库，必须在 uv sync 之后跑，
+# 因为 playwright 这个包本身是 uv sync 装进来的。
+RUN uv run playwright install --with-deps chromium
+
+# 用例执行需要的 node 工具链只有小程序链路才用得上（mcp_servers/wxmp），api 和 web
+# 都不碰，所以这个镜像里没有 node。接 mp 时那是另一台 macOS runner，不是这个镜像。
+

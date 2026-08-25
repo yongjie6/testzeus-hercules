@@ -1,0 +1,142 @@
+# Hercules E2E —— 在 deploy 的 CI/CD 设计里，这个仓库是一个「远端 E2E 项目」，
+# 和 esm/narnia/dev 并列。它不是服务仓的质量门：质量门（AI review、单测、契约、
+# build-check）跑在 MR 合入之前，这里跑在镜像**部署之后**，由 Jenkins Agent 触发并
+# 等待结果。所以它对提交没有否决权，对上线有。
+#
+# 两类 pipeline，触发源完全不同：
+#
+#   1. push / MR  -> 只跑 lint。校验的是用例库自己（格式、回归清单每条都匹配得到），
+#                    不碰被测产品，秒级完成。这是本仓库唯一卡 MR 的东西。
+#   2. trigger    -> 跑 E2E。由 Jenkins 在一次 test baseline 或 lane 发布之后触发，
+#                    带上 E2E_LANE / E2E_DEPLOY_MODE，产出 e2e-summary.json 供 Jenkins 判定。
+#
+# 为什么提交时不跑 E2E：每条用例都是 LLM 驱动的，一条几分钟、真花钱，全量 74 条是
+# 小时级。挂到每次 commit 上既拦不住人也付不起。
+
+stages:
+  - lint
+  - image
+  - e2e
+
+variables:
+  UV_LINK_MODE: copy
+  # 依赖已经烤进镜像，job 里不要再 sync：uv run 默认会同步项目，那会在每次发布的
+  # 关键路径上加几分钟，而这几分钟里 test 环境的 Lease 一直被 Jenkins 占着。
+  # 代价是 uv.lock 变了必须重建镜像——lint 阶段的 uv lock --check 负责让漂移可见。
+  UV_NO_SYNC: "1"
+  CI_IMAGE: $CI_REGISTRY_IMAGE/ci:latest
+  # 触发方不指定就两类都跑。Jenkins 按 e2e_matrix.json 收窄时传 E2E_TYPES=api。
+  E2E_TYPES: "api,web"
+  E2E_TARGET: regression
+
+workflow:
+  # 发布相关的 job 不允许被新 commit 自动取消（设计第 2 章）。E2E 被取消时 Jenkins
+  # 那边还在等，等到的会是一个没有结论的结果，而目标环境的锁还握在手里。
+  auto_cancel:
+    on_new_commit: none
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "trigger"
+    - if: $CI_PIPELINE_SOURCE == "pipeline"
+    - if: $CI_PIPELINE_SOURCE == "api"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ── lint ─────────────────────────────────────────────────────────────────────
+# 本仓库唯一卡 MR 的门。跑的是用例库的自检，不是产品验证。
+lint:
+  stage: lint
+  image: $CI_IMAGE
+  interruptible: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    # 不走 make lint：它 depends on fmt，会先用 black 重写文件再 --check，永远不会红。
+    - uv run --no-sync black --target-version py311 -l 200 --check testzeus_hercules/ tests/
+    - uv run --no-sync isort --check-only testzeus_hercules/
+    # uv.lock 和 pyproject 漂移了要在这里可见，否则 UV_NO_SYNC 会让镜像里的旧依赖
+    # 一直用下去，而没人知道。
+    - uv lock --check
+    # 用例库能不能组装出来。回归清单里有条目匹配不到时 assemble_version.py 直接非零
+    # 退出——一个悄悄少了一条的回归集，报告照样是绿的，这是最该在合入前拦住的。
+    - uv run --no-sync python assemble_version.py regression
+    - uv run --no-sync python assemble_version.py 3.0
+    - uv run --no-sync python assemble_version.py 1.0
+    # 已知失败名单本身写坏了也要在这里发现，而不是等到发布链路上。gate 只在「无法判定」
+    # 时返回 2（目录不存在、名单格式错），这里没有报告所以正常会返回 1，只拦 2。
+    - >
+      uv run --no-sync python helper_scripts/e2e_gate.py
+      --run-dir opt/.run/regression
+      --known-failures opt/cases/known_failures.txt
+      --summary /tmp/lint-summary.json --junit /tmp/lint-junit.xml;
+      test $? -ne 2
+  # Gherkin 风格检查只报告，不判定：用例写法的收敛是渐进的，不该拿它拦住一次修复。
+  after_script:
+    - uv run --no-sync python helper_scripts/lint_gherkin.py || true
+
+# ── CI 镜像 ───────────────────────────────────────────────────────────────────
+# 设计第 8 章：构建 Runner 不用 privileged DinD / hostPath / docker socket，走 kaniko。
+build-ci-image:
+  stage: image
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      changes: [Dockerfile.ci, uv.lock, pyproject.toml]
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+      allow_failure: true
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context "$CI_PROJECT_DIR" --dockerfile "$CI_PROJECT_DIR/Dockerfile.ci"
+        --destination "$CI_REGISTRY_IMAGE/ci:$CI_COMMIT_SHORT_SHA"
+        --destination "$CI_REGISTRY_IMAGE/ci:latest"
+
+# ── E2E ──────────────────────────────────────────────────────────────────────
+.e2e:
+  stage: e2e
+  image: $CI_IMAGE
+  timeout: 1h
+  # Jenkins 在同步等这个 job 的结果，中途被取消等于让它拿到一个没有结论的结果。
+  interruptible: false
+  variables:
+    E2E_SUMMARY_PATH: reports/e2e-summary.json
+    E2E_JUNIT_PATH: reports/e2e-junit.xml
+  script:
+    - ./run-ci.sh
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - reports/
+      # 证据：截图、录像、网络日志、api_logs.log。红的时候没有这些，一条 LLM 驱动的
+      # 用例失败几乎无法复盘。
+      - opt/.run/*/proofs/
+      - opt/.run/*/log_files/
+      - opt/.run/*/tests/*/proofs/
+      - opt/.run/*/tests/*/log_files/
+    reports:
+      junit: reports/e2e-junit.xml
+
+e2e:api:
+  extends: .e2e
+  variables:
+    E2E_TYPE: api
+  rules:
+    # E2E_LANE 必须由触发方显式给出，包括 baseline 时给空串。run-ci.sh 会拒绝未定义的
+    # 情况——esm_api.py 里 DEFAULT_LANE 兜底成 feat-esm-v3-0，不传等于静默测错环境。
+    - if: '$CI_PIPELINE_SOURCE =~ /^(trigger|pipeline|api|schedule|web)$/ && $E2E_TYPES =~ /api/'
+
+e2e:web:
+  extends: .e2e
+  variables:
+    E2E_TYPE: web
+  # 当前 opt/cases/web/smoke/v1.0.feature 打的是 www.google.com，国内 runner 连不通，
+  # 这条必然红。换成内网可达的地址之后把这两行删掉，让它真正参与判定。
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(trigger|pipeline|api|schedule|web)$/ && $E2E_TYPES =~ /web/'

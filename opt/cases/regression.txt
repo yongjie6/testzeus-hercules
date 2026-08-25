@@ -11,6 +11,12 @@
 #
 # 匹配不到的条目会直接报错中止——回归集悄悄少一条，报告照样是绿的。
 
+# --- 浏览器链路（CI 里唯一不需要专门环境的一类） ---
+# 不是产品用例，验的是浏览器那条链路本身还通。放进回归集是为了让 CI 的 web job 有东西可跑。
+# ⚠ 当前这条打的是 www.google.com，国内 runner 连不通，.gitlab-ci.yml 里 e2e:web 暂时
+#   allow_failure。换成内网可达的地址之后把那两行删掉。
+web/smoke :: WEB-SMOKE-01
+
 # --- 小程序页面（需要开发者工具常驻 + mock 网关在跑） ---
 mp/nav  :: TC-ESMV1-007-L1-0
 mp/nav  :: TC-ESMV1-007-L1-1
