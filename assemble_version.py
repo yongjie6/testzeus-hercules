@@ -4,11 +4,17 @@
 Cases live once, in opt/cases/<type>/<module>/<version>.feature, filed under
 the version they belong to. A version runs its own cases only.
 
-<type> is api, web or mp (mini program). It is a directory rather than a naming
-convention because the three need different things present to run at all -- an
-API suite wants a lane, a mini program suite wants DevTools and the mock
+<type> is api, web, mp (mini program) or mp-real. It is a directory rather than
+a naming convention because they need different things present to run at all --
+an API suite wants a lane, a mini program suite wants DevTools and the mock
 gateway -- so being able to assemble and run one type on its own is what makes
 a run possible at all, not a convenience.
+
+mp and mp-real are the same surface against different backends: mp drives the
+dist-scenario bundle, whose API address is compiled in as the local mock
+gateway, while mp-real drives dist-integration, built against the real lane.
+DevTools opens one project at a time, so the two can never share a run --
+run-version.sh refuses outright rather than letting half the suites fail.
 
     ./assemble_version.py 3.0          every type's v3.0 cases
     ./assemble_version.py 3.0 api      just the API suites
@@ -40,7 +46,7 @@ from pathlib import Path
 CASES = Path("opt/cases")
 BUILD = Path("opt/.run")
 MANIFEST = CASES / "regression.txt"
-TYPES = ("api", "web", "mp")
+TYPES = ("api", "web", "mp", "mp-real")
 
 VERSION_FILE = re.compile(r"^v?(\d+(?:\.\d+)*)\.feature$")
 SCENARIO = re.compile(r"^\s*Scenario(?:\s+Outline)?\s*:", re.IGNORECASE)

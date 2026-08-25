@@ -558,6 +558,31 @@ const TOOLS = [
     },
   },
   {
+    name: "mp_restart",
+    description:
+      "Restart the mini program from scratch and land on `route`, the way " +
+      "killing it and reopening it would.\n" +
+      "Needed because clearing storage does NOT sign out a running instance. " +
+      "The app's session store keeps the token in memory and prefers it over " +
+      "storage, so after mp_clear_storage the app still boots as whoever was " +
+      "signed in before, and a case asserting the signed-out screen gets the " +
+      "signed-in one. This is invisible against the mock gateway, where every " +
+      "fixture shares one fake token and a stale in-memory token is " +
+      "indistinguishable from a fresh one -- it only bites once real accounts " +
+      "with different tokens are involved.\n" +
+      "So: to get a genuine cold start, clear storage first, then restart. To " +
+      "switch between two different accounts, restart between them.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        route: {
+          type: "string",
+          description: "Route name or absolute path to land on after restarting. Defaults to the entry page.",
+        },
+      },
+    },
+  },
+  {
     name: "mp_snapshot",
     description:
       "Show what is on the current page: every visible text and control, with " +
@@ -1104,6 +1129,63 @@ const handlers = {
     const how = method !== "auto" ? method : isTab ? "switchTab" : "reLaunch";
     await mp[how](path);
     return `${how} -> ${path}`;
+  },
+
+  async mp_restart({ route } = {}) {
+    const mp = await getMiniProgram();
+    const { path } = await resolveRoute(route || "entry");
+
+    // DevTools tears the automation channel down as it restarts, so this call
+    // often rejects even when the restart itself is fine. Drop the connection
+    // either way and let the reconnect below decide whether it worked.
+    try {
+      await mp.callWxMethod("restartMiniProgram", { path });
+    } catch {
+      // expected when the channel goes first
+    }
+    try {
+      mp.disconnect();
+    } catch {
+      // already gone
+    }
+    miniProgram = null;
+    // The bundle has not changed, but the table was read over a connection
+    // that no longer exists; re-read it rather than reason about what survives.
+    routeTable = null;
+
+    const deadline = Date.now() + CONNECT_TIMEOUT;
+    let lastError;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1000));
+      let fresh;
+      try {
+        fresh = await getMiniProgram();
+        await fresh.currentPage();
+      } catch (err) {
+        lastError = err;
+        miniProgram = null;
+        continue;
+      }
+      // A freshly booted app is still deciding where to go -- the entry page
+      // resolves the session and may route somewhere else entirely, which on a
+      // real backend is the interesting part. Reporting the first page read
+      // back would name a page the app is in the middle of leaving, so wait
+      // until two reads in a row agree before saying where it landed.
+      let previous = null;
+      const settleBy = Date.now() + 8000;
+      while (Date.now() < settleBy) {
+        const here = (await fresh.currentPage()).path;
+        if (here === previous) return `Restarted, settled on ${here}.`;
+        previous = here;
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      return `Restarted, still routing, last seen on ${previous}.`;
+    }
+    throw new Error(
+      `Restarted the mini program but could not reconnect within ${CONNECT_TIMEOUT}ms ` +
+        `(${lastError?.message || "no error reported"}). DevTools may still be reloading -- ` +
+        "check that its window is open and the project is still loaded."
+    );
   },
 
   async mp_snapshot() {

@@ -13,7 +13,7 @@ set -euo pipefail
 V="${1:?用法: ./run-version.sh <版本|regression> [类型|套件]   类型: api / web / mp}"
 SEL="${2:-}"
 
-TYPES="api web mp"
+TYPES="api web mp mp-real"
 TYPE=""
 SUITE=""
 if [ -n "$SEL" ]; then
@@ -30,12 +30,45 @@ fi
 
 # 只有跑到小程序套件时才需要开发者工具。曾经有一轮对着无渲染的实例跑满 24 分钟，
 # 报了 7 个通过却一张截图都没有；但接口用例不碰开发者工具，不该被它挡在门外。
-needs_devtools() {
-  [ -n "$SUITE" ] && { [[ "$SUITE" == mp-* ]] && return 0 || return 1; }
-  [ -n "$TYPE" ] && { [ "$TYPE" = mp ] && return 0 || return 1; }
-  ls -d "$BASE"/tests/mp-* >/dev/null 2>&1
-}
-if needs_devtools; then
+#
+# 小程序有两种跑法，用的是两个不同的包：mp 走 dist-scenario，API 地址编译期写死成本地
+# mock 网关；mp-real 走 dist-integration，编译进真实泳道地址。开发者工具一次只能打开
+# 一个项目，所以这两类凑在同一个 run 里必然有一半跑不起来——与其让它半绿，不如直接拒绝。
+#
+# 注意 mp-real-* 同时匹配 mp-*，所有分支一律用 case 且把 mp-real-* 放前面。写成一串
+# if 的话顺序一旦被人调换就会静默走错分支。
+MOCK_MP=0
+REAL_MP=0
+if [ -n "$SUITE" ]; then
+  case "$SUITE" in
+    mp-real-*) REAL_MP=1 ;;
+    mp-*)      MOCK_MP=1 ;;
+  esac
+elif [ -n "$TYPE" ]; then
+  case "$TYPE" in
+    mp-real) REAL_MP=1 ;;
+    mp)      MOCK_MP=1 ;;
+  esac
+else
+  for suite_dir in "$BASE"/tests/*/; do
+    [ -d "$suite_dir" ] || continue
+    case "$(basename "$suite_dir")" in
+      mp-real-*) REAL_MP=1 ;;
+      mp-*)      MOCK_MP=1 ;;
+    esac
+  done
+fi
+
+if [ "$MOCK_MP" = 1 ] && [ "$REAL_MP" = 1 ]; then
+  echo "mp 和 mp-real 不能在同一个 run 里：前者要 dist-scenario + mock 网关，"
+  echo "后者要 dist-integration + 真实泳道，开发者工具一次只能开一个项目。"
+  echo "分开跑：./run-version.sh $V mp   和   ./run-version.sh $V mp-real"
+  exit 1
+fi
+
+if [ "$REAL_MP" = 1 ]; then
+  node mcp_servers/wxmp/preflight.mjs --mode real
+elif [ "$MOCK_MP" = 1 ]; then
   node mcp_servers/wxmp/preflight.mjs
 fi
 

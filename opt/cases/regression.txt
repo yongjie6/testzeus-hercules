@@ -1,9 +1,14 @@
 # 核心回归集：每次发版都要跑的用例，从各版本里手工挑选
 # 格式：<类型>/<模块> :: <Scenario 标题子串>
 # 用 TC ID 匹配而不是描述文案，改标题不会打断清单
-# 类型：api（接口）/ web（浏览器）/ mp（小程序）
+# 类型：api（接口）/ web（浏览器）/ mp（小程序，mock 网关）/ mp-real（小程序，真实后端）
 #
 # 分类型跑：./run-version.sh regression mp
+#
+# ⚠️ mp 和 mp-real 用的是两个不同的小程序包（dist-scenario / dist-integration），
+# 开发者工具一次只能开一个，所以**这个回归集不能一把梭跑完**，必须分类型跑。
+# 不带类型直接 ./run-version.sh regression 会被 run-version.sh 拒绝。
+#
 # 匹配不到的条目会直接报错中止——回归集悄悄少一条，报告照样是绿的。
 
 # --- 小程序页面（需要开发者工具常驻 + mock 网关在跑） ---
@@ -22,3 +27,9 @@ api/esm-profile    :: TC-ESM30-PF-01
 api/esm-profile    :: TC-ESM30-PF-04
 api/esm-chat       :: TC-ESM30-CH-01
 api/esm-flow       :: TC-ESM30-FL-03
+
+# --- 小程序连真实后端（需要 dist-integration 包 + 泳道健康） ---
+# 只有一条，验的是「小程序和真实后端还能不能对上话」。接口契约有 api 套件盯着，
+# 页面渲染有 mp 套件盯着，这条盯的是 mock 按定义测不到的那段：真实后端算出来的状态
+# 能不能驱动界面。跑法：./run-version.sh regression mp-real
+mp-real/smoke :: TC-ESM30-RS-01

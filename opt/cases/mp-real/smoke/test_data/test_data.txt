@@ -1,0 +1,65 @@
+# 被测对象：微信小程序（小量动机）连真实后端
+
+本项目测试的是微信小程序，不是网页。
+
+**本套件和 mp 套件的区别只有一个：后端是真的。** 页面操作方式完全一样。
+
+## 工具路由
+
+默认所有页面操作走 MCP 工具，工具名以 mmcp_wxmp_ 开头，target_helper 用 mcp。
+
+浏览器工具（open_url、click、get_interactive_elements、get_page_text、geturl 等）
+对小程序页面无效，不要用它们打开或操作小程序页面。
+
+planner 的能力表把「visual validation」归给 browser helper，那一条在本项目不成立：
+这里没有可用的浏览器上下文，浏览器截到的是空白页，不是小程序画面。
+所以步骤里出现「在截图上确认…」「看画面」时，target_helper 依然必须是 mcp。
+
+## 这个套件不要用的两个工具
+
+- **不要用 mmcp_wxmp_mp_login_as**。它注入的是 fixture 里的假 token
+  （access-token-001 那种），真实后端不认，注进去照样是未登录。本套件的登录态由
+  小程序自己向真实后端注册获得。
+- **不要用 mmcp_wxmp_mp_use_fixture**。它切的是本地 mock 网关的数据，本套件根本
+  没连 mock 网关，调它只会报连不上控制端口。
+
+## 操作方式
+
+1. 冷启动要两步：先 mmcp_wxmp_mp_clear_storage 清空 storage，再
+   mmcp_wxmp_mp_restart 重启小程序。
+
+   **只清 storage 是不够的**——小程序的 session 存在内存里，读取时优先用内存里的
+   token，storage 被清空了也照样以上一轮的身份启动，然后被路由到该身份对应的页面。
+   这个坑在 mock 网关下看不出来（所有 fixture 共用同一个假 token，内存里的旧 token
+   和新写的分辨不出），换成真实账号、token 各不相同之后立刻就会撞上。
+
+2. 跳转页面用 mmcp_wxmp_mp_navigate，传路由名而不是路径。
+   可用：启动页 / 首页 / 对话 / 我的 / 信息采集 / 量表 / 测量结果 / 个人报告 /
+   他人报告 / 注销账号
+   路由表是从当前装载的包里现读的，不是写死的表。
+
+3. 不确定页面上有什么时，先用 mmcp_wxmp_mp_snapshot 查看。
+   它会列出当前页所有可见文案和控件，包括输入框的 value。
+
+4. 点击用 mmcp_wxmp_mp_tap_text，传可见文案。不要用 CSS 选择器或 class 名。
+
+5. 断言基于 mmcp_wxmp_mp_snapshot 的输出判断文案是否存在。
+
+## 环境说明
+
+后端是**真实测试环境泳道** `feat-esm-v3-0`，不是 mock 网关。
+
+小程序包必须是 `dist-integration`（API 地址编译期指向 `zmapi-test.daqian369.com`），
+不能是 mp 套件用的 `dist-scenario`（指向 `localhost:39100`）。构建命令和
+「新项目路径首次必须手动勾一次不校验合法域名」这条见 `mcp_servers/wxmp/README.md`。
+
+「使用 Narnia 测试账号」按钮只在 `TARO_APP_ENABLE_NARNIA_TEST_AUTH=true` 构建时渲染，
+用例第一条断言就是它——包不对时会在这一步失败，而不是拖到后面报一个看不懂的错。
+
+## 这个账号是新注册的
+
+点按钮登录拿到的是一个全新随机账号（手机号 `199xxxxxxxx`），没有资料、没有量表结果。
+真实后端因此把它判成 `HOME_ENTRY_STAGE_COMPLETE_USER_INFO`，界面落到填写信息页。
+不要期望它有任何历史数据。
+
+每跑一次就在真实测试环境留下一个账号，目前没有清理机制。

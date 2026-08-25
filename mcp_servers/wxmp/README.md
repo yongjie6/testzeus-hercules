@@ -103,6 +103,68 @@ npm run smoke   # 只验 MCP 协议层，不需要开发者工具
 npm run live    # 验真实链路：连接、当前页、storage、web-view
 ```
 
+## 另一种跑法：连真实后端（mp-real）
+
+上面整套讲的是 `dist-scenario` + mock 网关，对应 `opt/cases/mp/`。还有第二种跑法，
+对应 `opt/cases/mp-real/`：**`dist-integration` 包 + 真实泳道**，不起 mock 网关。
+
+开发者工具一次只能打开一个项目，所以两种跑法不能同处一个 run，`run-version.sh` 会直接拒绝：
+
+```bash
+./run-version.sh regression mp        # dist-scenario + mock 网关
+./run-version.sh regression mp-real   # dist-integration + 真实泳道
+```
+
+`preflight.mjs --mode real` 会跳过 mock 网关检查，其余照查。
+
+### 构建 dist-integration
+
+`.env.integration` 里已经配好了真实泳道地址，但 `TARO_APP_ENABLE_NARNIA_TEST_AUTH`
+默认是 `false`，要在命令行覆盖成 `true`——否则启动页不会渲染登录入口：
+
+```bash
+cd <miniapp>/packages/app && TARO_OUTPUT_ROOT="$(pwd)/dist-integration" TARO_APP_ENABLE_NARNIA_TEST_AUTH=true pnpm run build:weapp:integration
+```
+
+产物里 `common.js` 应该出现 `zmapi-test.daqian369.com` 而不是 `localhost:39100`，
+可以拿这个 grep 一下确认构建对了。
+
+### 登录不用注 token
+
+`dist-integration` 的启动页会多出一个「使用 Narnia 测试账号」按钮
+（`narniaIntegrationAuth.weapp.ts`，走 infra-auth 的手机号注册）。点它就完成注册加登录，
+**凭据全程在小程序内部产生，不经过用例文本、不经过 LLM**，所以不需要 `mp_set_storage`
+往里注 token，也不需要账号池。
+
+代价是每点一次就在真实测试环境留下一个随机 `199xxxxxxxx` 账号，且只能造全新账号，
+指定不了登录到某个已有账号。
+
+这个按钮同时是**包指纹**：`dist-scenario` 里没有它。用例第一条断言就是它，包开错了会在
+第一步失败，而不是拖到后面报一个看不懂的错——这一层 preflight 判断不了（`cli` 不暴露
+当前打开的项目，磁盘上的产物又和已加载的项目没有绑定关系）。
+
+### 域名校验每个新项目路径都要手动勾一次
+
+和 `dist-scenario` 一样，**换一个从没打开过的项目路径就要重新勾一次**：
+详情 → 本地设置 → 勾「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」。
+
+往产物里塞 `project.private.config.json` 不管用，开发者工具是按项目路径记住这个设置的。
+勾完还要 `cli close` + `cli open` 重载一次项目才生效——勾完立刻测仍然会 `request:fail`，
+重载之后才通。
+
+## 清 storage 不等于登出
+
+小程序的 session 存在内存里，读取时**优先用内存里的 token**
+（`useSession.ts`：`sessionState.tokens ?? getTokenPair()`）。所以
+`mp_clear_storage` 之后再 `reLaunch`，上一轮的登录态还活着，app 会照着旧身份路由。
+
+要真正冷启动，清完 storage 还要 `mp_restart`（它调开发者工具的
+`restartMiniProgram`，连接会断，工具内部自己重连）。切换两个不同账号之间同理。
+
+**这个坑在 mock 网关下看不出来**：所有 fixture 共用同一个假 token
+（`access-token-001`），内存里的旧 token 和新写进去的分辨不出来，`mp_login_as` 看着
+一直是好的。换成真实账号、token 各不相同之后第一次就会撞上。
+
 ## 接进 Hercules
 
 仓库根目录 `mcp_servers.json`：

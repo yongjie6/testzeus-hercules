@@ -21,6 +21,23 @@ import net from "node:net";
 const WS = process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420";
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 39100);
 
+/**
+ * mock（默认）跑 dist-scenario，数据来自本地 mock 网关；real 跑 dist-integration，
+ * 数据来自真实泳道，那时候 39100 根本不该被要求在监听。
+ *
+ * real 模式只少了网关这一项，开发者工具和渲染层照查——「对着无渲染实例跑满 24 分钟」
+ * 那个坑跟后端是谁无关。
+ *
+ * 这里不试图判断开发者工具里打开的到底是哪个包：cli 不暴露这个，磁盘上的构建产物又和
+ * 已加载的项目没有绑定关系。那一层由用例自己的第一条断言兜底——「使用 Narnia 测试账号」
+ * 按钮只在 integration 包里渲染，是可观测的包指纹。
+ */
+const MODE = process.argv.includes("--mode") ? process.argv[process.argv.indexOf("--mode") + 1] : "mock";
+if (!["mock", "real"].includes(MODE)) {
+  console.error(`\n✗ 未知的 --mode ${MODE}\n  可选: mock（默认，dist-scenario + mock 网关）/ real（dist-integration + 真实泳道）\n`);
+  process.exit(1);
+}
+
 const listening = (port) =>
   new Promise((resolve) => {
     const socket = net.connect({ port, host: "127.0.0.1" });
@@ -41,14 +58,18 @@ const fail = (what, why, fix) => {
 
 applyDevToolsCompat(() => {});
 
-if (!(await listening(GATEWAY_PORT))) {
-  fail(
-    `mock 网关未监听 ${GATEWAY_PORT}`,
-    "小程序包里烧死了这个地址，网关不在时页面会一路显示加载失败。",
-    "cd <miniapp>/fe_app/packages/e2e && ./node_modules/.bin/tsx <repo>/mcp_servers/wxmp/gateway.mts"
-  );
+if (MODE === "mock") {
+  if (!(await listening(GATEWAY_PORT))) {
+    fail(
+      `mock 网关未监听 ${GATEWAY_PORT}`,
+      "小程序包里烧死了这个地址，网关不在时页面会一路显示加载失败。",
+      "cd <miniapp>/packages/e2e && ./node_modules/.bin/tsx <repo>/mcp_servers/wxmp/gateway.mts"
+    );
+  }
+  console.log(`  ✓ mock 网关 ${GATEWAY_PORT}`);
+} else {
+  console.log("  · real 模式，跳过 mock 网关检查（数据来自真实泳道）");
 }
-console.log(`  ✓ mock 网关 ${GATEWAY_PORT}`);
 
 let mp;
 try {
