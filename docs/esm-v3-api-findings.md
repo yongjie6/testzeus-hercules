@@ -77,6 +77,48 @@ curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN_A" \
 
 ---
 
+## P0-3 刚创建的 ACTIVE 分享，立刻绑定却报"分享无效"（2026-08-24 新增，疑似回归）
+
+`CreateRelationshipShare` 返回 `status: RELATIONSHIP_SHARE_STATUS_ACTIVE`，几秒内同一个
+`shareId` 去 `BindRelationshipShare`，返回 `BIZ_ESM_PROFILE_SHARE_INVALID_OR_EXPIRED`
+（"relationship share not active"）——和刚创建时的响应自相矛盾。
+
+复现过程完全照抄 `TC-ESM30-PF-13` 的前置（A、B 都做完 144 题量表），排除过以下几种：
+不是账号没量表结果（B 也做完了）、不是 `launchScene` 传错（用的是配置里唯一可用的
+`home_invite`，与 `TC-ESM30-PF-13`/`PF-15` 一致）、不是绑定太晚过期（create 后几秒内
+立刻 bind）、不是偶发（连续用两组全新账号复现两次，现象一致）。
+
+这条如果真的坏了，`TC-ESM30-PF-12` 到 `PF-17`、`TC-ESM30-CH-12` 到 `CH-16` 这些依赖
+候选关系建成的用例现在应该全线红——即整条"关系"功能链路，不只是新加的用例。这份文档里
+P0-2 记录 `BindRelationshipShare` 是成功的（只是 `counterpart_user` 是空的），说明这条
+在写那份记录时还是通的，现在坏了很可能是这段时间内的回归，不是一直如此。
+
+复现：
+
+```bash
+export TOKEN_A=...  # 做完量表
+export TOKEN_B=...  # 做完量表
+SHARE_ID=$(curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN_A" \
+  -X POST "$B/api/esm/v1/relationships/share/create" \
+  -d '{"launchScene":"home_invite","baseReq":{"productId":"narnia","requestId":"p3"}}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['share']['shareId'])")
+curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN_B" \
+  -X POST "$B/api/esm/v1/relationships/share/bind" \
+  -d "{\"shareId\":\"$SHARE_ID\",\"launchScene\":\"home_invite\",\"baseReq\":{\"productId\":\"narnia\",\"requestId\":\"p4\"}}"
+```
+
+同一轮复现还发现另一个独立现象，一并记在这里而不是单开一条：完成 144 题后，
+`personal_detail_v1`/`personal_dialogue_v1` 报告在 5 分钟以上没有变成
+`REPORT_STATUS_READY`（`GetReport` 一直返回 `BIZ_ESM_PROFILE_REPORT_NOT_FOUND`），
+而 `GetHomeState.latestResult` 已经正常写回。是否和这条同一个根因未判断，两个都会挡住
+`esm-chat`/`esm-profile` 里所有需要报告或需要关系链路的用例（`TC-ESM30-CH-04` 及以后、
+`TC-ESM30-PF-07` 及以后），建议先查这条泳道当前是否健康，再决定这些用例要不要现在跑。
+
+对应用例：`TC-ESM30-PF-12` 到 `PF-17`、`TC-ESM30-PF-18` 到 `PF-24`、`TC-ESM30-CH-12` 到
+`CH-19`（当前应该全线会红，如果这条重现的话）。
+
+---
+
 ## P1-3 重新开始答题缺确认时，返回的是题号越界错误码
 
 `RestartAnswering` 不带 `confirmed=true` 时返回：
