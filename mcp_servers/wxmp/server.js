@@ -133,51 +133,141 @@ function noteEvidenceGap(detail) {
 }
 
 /**
- * Mirrors fe_app/packages/e2e/tests/utils/test-router.ts. Tests name routes
- * instead of spelling out paths, per that suite's conventions; tab routes need
- * switchTab rather than navigateTo, which is why the two lists are separate.
+ * Named routes, resolved against the bundle that is actually loaded.
+ *
+ * This was a hardcoded path table mirroring
+ * fe_app/packages/e2e/tests/utils/test-router.ts, and it went silently wrong
+ * the moment a different version of the app was opened in DevTools. V3.0 moved
+ * home from /pages/index/index to /features/home/pages/index, replaced the
+ * login page with an entry page, renamed luxx_test to assessment, and cut the
+ * tab bar from three tabs to two -- so navigating to 对话 still called
+ * switchTab on a page that is no longer a tab. Nothing reported a version
+ * mismatch; pages just failed to open.
+ *
+ * The bundle already carries all of this in __wxConfig. Read it once per
+ * connection and resolve names against it, so whichever build is open is the
+ * one being navigated, and a name the build has no page for fails saying so.
+ *
+ * Candidates are listed newest first; the first one present in the bundle wins.
  */
-const ROUTES = {
-  login: "/features/auth/pages/login/index",
-  home: "/pages/index/index",
-  chat: "/features/chat/pages/index",
-  mine: "/features/mine/pages/index",
-  luxxTest: "/features/luxx_test/pages/index",
-  unregister: "/features/account/pages/unregister/index",
-  webview: "/features/webview/pages/index",
+const ROUTE_CANDIDATES = {
+  entry: ["features/entry/pages/index", "features/auth/pages/login/index"],
+  home: ["features/home/pages/index", "pages/index/index"],
+  chat: ["features/chat/pages/index"],
+  mine: ["features/mine/pages/index"],
+  profile: ["features/profile/pages/required/index"],
+  assessment: ["features/assessment/pages/index", "features/luxx_test/pages/index"],
+  result: ["features/result/pages/index"],
+  report: ["features/report/pages/personal/index"],
+  externalReport: ["features/report/pages/external/index"],
+  unregister: ["features/account/pages/unregister/index"],
+  webview: ["features/webview/pages/index"],
+  privacy: ["features/agreements/pages/privacy/index"],
+  agreement: ["features/agreements/pages/agreement/index"],
 };
-const TAB_ROUTES = new Set(["home", "chat", "mine"]);
 
 /**
  * Chinese aliases so scenarios can be written the way the app labels things.
- * The tab names come from the bundle's app.json tabBar; the rest match the
- * wording used in the UI. Without these a model has to translate "我的" to
- * "mine" on its own, which it usually gets right and occasionally does not --
- * not a good trade for test assets that must behave the same every run.
+ * The wording follows the route vocabulary the cases are generated against
+ * (openspec/prds/esm-v3-0/v3.0/gherkin-map.yaml). Without these a model has to
+ * translate "我的" to "mine" on its own, which it usually gets right and
+ * occasionally does not -- not a good trade for test assets that must behave
+ * the same every run.
  */
 const ROUTE_ALIASES = {
+  启动页: "entry",
+  登录: "entry",
+  登录页: "entry",
+  登录注册: "entry",
+  login: "entry",
   首页: "home",
   主页: "home",
   对话: "chat",
   聊天: "chat",
   我的: "mine",
   个人中心: "mine",
-  登录: "login",
-  登录页: "login",
-  量表: "luxxTest",
+  信息采集: "profile",
+  填写信息: "profile",
+  资料: "profile",
+  量表: "assessment",
+  答题: "assessment",
+  量表测试: "assessment",
+  luxxTest: "assessment",
+  测量结果: "result",
+  结果: "result",
+  个人报告: "report",
+  报告: "report",
+  我的报告: "report",
+  解读报告: "report",
+  他人报告: "externalReport",
+  对方报告: "externalReport",
   注销: "unregister",
   注销账号: "unregister",
+  隐私政策: "privacy",
+  用户协议: "agreement",
 };
 
-function resolveRoute(input) {
-  const key = ROUTE_ALIASES[input] ?? input;
-  if (Object.prototype.hasOwnProperty.call(ROUTES, key)) {
-    return { key, path: ROUTES[key], named: true };
+// One bundle per connection, and the process is respawned per scenario, so a
+// plain memo is enough; there is no invalidation case to handle.
+let routeTable = null;
+
+async function getRouteTable() {
+  if (routeTable) return routeTable;
+  const mp = await getMiniProgram();
+  const config = await mp.evaluate(function () {
+    const c = typeof __wxConfig !== "undefined" ? __wxConfig : null;
+    if (!c) return null;
+    return {
+      pages: c.pages || [],
+      tabs: c.tabBar && c.tabBar.list ? c.tabBar.list.map((t) => t.pagePath) : [],
+    };
+  });
+  if (!config || !config.pages.length) {
+    throw new Error(
+      "Could not read the bundle's page list from __wxConfig, so named routes " +
+        "cannot be resolved. Absolute paths starting with / still work."
+    );
   }
+  // DevTools reports tab pagePaths with a .html suffix that the page list does
+  // not have, so both sides get normalised before they are compared.
+  const strip = (p) => String(p).replace(/^\//, "").replace(/\.html$/, "");
+  const pages = config.pages.map(strip);
+  const pageSet = new Set(pages);
+  const tabSet = new Set(config.tabs.map(strip));
+
+  const paths = {};
+  const tabs = new Set();
+  for (const [key, candidates] of Object.entries(ROUTE_CANDIDATES)) {
+    const hit = candidates.find((candidate) => pageSet.has(candidate));
+    if (!hit) continue;
+    paths[key] = `/${hit}`;
+    if (tabSet.has(hit)) tabs.add(key);
+  }
+  routeTable = { paths, tabs, pages };
+  log(`routes ${Object.keys(paths).join(", ")} | tabs ${[...tabs].join(", ") || "(none)"}`);
+  return routeTable;
+}
+
+async function resolveRoute(input) {
+  // An absolute path is taken as given: it needs no table, and it stays usable
+  // on a bundle whose page list could not be read.
   if (typeof input === "string" && input.startsWith("/")) {
-    return { key: null, path: input, named: false };
+    return { key: null, path: input, isTab: false };
   }
-  return null;
+  const key = ROUTE_ALIASES[input] ?? input;
+  const { paths, tabs, pages } = await getRouteTable();
+  if (paths[key]) return { key, path: paths[key], isTab: tabs.has(key) };
+
+  const why = ROUTE_CANDIDATES[key]
+    ? `"${input}" is a known route, but this bundle has no page for it -- ` +
+      `looked for ${ROUTE_CANDIDATES[key].join(" or ")}. The project open in ` +
+      "DevTools is probably a different version of the app than the case expects."
+    : `"${input}" is not a route name.`;
+  throw new Error(
+    `${why}\nRoutes this bundle has: ${Object.keys(paths).join(", ")}\n` +
+      `Its pages: ${pages.join(", ")}\n` +
+      "Chinese names and absolute paths starting with / also work."
+  );
 }
 
 // Gesture tuning, both settled by repeated runs against the app: a single
@@ -222,6 +312,36 @@ function loadFixtureDefaults() {
 // is seeded from, and seeding a base user against a scene's backend data is
 // exactly the kind of mismatch that fails far away from its cause.
 let FIXTURE = loadFixtureDefaults();
+
+/**
+ * One door to the mock gateway's control port: fixture swaps and the websocket
+ * controls both go through it. The port is plain HTTP on 127.0.0.1 -- the
+ * gateway's own /__push sits behind its self-signed cert, and gateway.mts
+ * re-exposes it here so this process never has to opt out of TLS checking.
+ */
+async function gatewayCall(method, route, body) {
+  const url = `${GATEWAY_CONTROL.replace(/\/$/, "")}${route}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      ...(body === undefined
+        ? {}
+        : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    });
+  } catch (err) {
+    throw new Error(
+      `Could not reach the gateway control port at ${url} (${err.message}). ` +
+        "The mock gateway has to be running with a control port: start it with " +
+        "gateway.mts, which opens 39102 by default."
+    );
+  }
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || payload.ok === false) {
+    throw new Error(payload.error || `Gateway refused ${method} ${route} (${res.status}).`);
+  }
+  return payload;
+}
 
 /* ------------------------------------------------------------------ *
  * Connection (lazy singleton)
@@ -300,13 +420,55 @@ async function screenBase64() {
   return { page, image };
 }
 
+/**
+ * The page's top-level nodes, with their wxml already fetched.
+ *
+ * V1 bundles wrapped every page in a `<page>` element, so one `$("page")` got
+ * the whole tree. The V3.0 bundle renders with `navigationStyle: 'custom'` and
+ * has no `<page>` wrapper at all: `$("page")` returns null, and every snapshot,
+ * tap-by-text and page-level gesture failed with "exposed no root node" while
+ * the simulator was visibly rendering the screen. Fall back to the top-level
+ * views, which is where that tree actually starts.
+ *
+ * `$$("view")` matches nested views too and `wxml()` renders an element's whole
+ * subtree, so taking every match would repeat most of the page several times
+ * over -- and a duplicated tree makes every "how many X are on screen" count
+ * wrong, which is most of what these cases assert. Keep only the matches that
+ * no other match already contains.
+ */
+async function pageRoots(page) {
+  const wrapper = await page.$("page");
+  if (wrapper) return [{ el: wrapper, wxml: String(await wrapper.wxml()) }];
+
+  const views = (await page.$$("view")) ?? [];
+  const found = [];
+  for (const el of views) found.push({ el, wxml: String(await el.wxml()) });
+  return found.filter(
+    (candidate, i) =>
+      !found.some(
+        (other, j) =>
+          j !== i && other.wxml.length > candidate.wxml.length && other.wxml.includes(candidate.wxml)
+      )
+  );
+}
+
+/** Parsed nodes for the whole page, however the bundle roots it. */
+async function pageNodes(page) {
+  const roots = await pageRoots(page);
+  if (!roots.length) {
+    throw new Error(
+      `Page ${page.path} rendered no nodes. It may still be loading, or the mock ` +
+        "gateway may not be serving the data this page needs -- check mp_use_fixture."
+    );
+  }
+  return roots.flatMap((root) => parseWxml(root.wxml));
+}
+
 /** Current page plus its parsed nodes; one round trip for the wxml. */
 async function readPage() {
   const mp = await getMiniProgram();
   const page = await mp.currentPage();
-  const root = await page.$("page");
-  if (!root) throw new Error(`Page ${page.path} exposed no root node.`);
-  return { page, nodes: parseWxml(await root.wxml()) };
+  return { page, nodes: await pageNodes(page) };
 }
 
 /** Resolve the element showing `text`, or explain what is on screen instead. */
@@ -552,21 +714,82 @@ const TOOLS = [
   {
     name: "mp_use_fixture",
     description:
-      "Switch the backend data the app talks to, by naming a fixture scene such " +
-      "as 'TC-AUTH-004' or 'base'. Use this when a case needs an account or " +
-      "server state the default data does not have -- an expired token, an empty " +
-      "list, a quota that is used up, an error response. Call it BEFORE " +
-      "mp_login_as, because the login state is seeded from the scene's data. " +
-      "With no argument it reports the current scene and every scene available.",
+      "Set the backend state the app talks to, by naming one or more fixtures. " +
+      "Use this when a case needs an account or server state the default data " +
+      "does not have -- an expired token, an empty list, a quota that is used " +
+      "up, a report that is ready, an error response. Call it BEFORE " +
+      "mp_login_as, because the login state is seeded from this data.\n" +
+      "Names compose: pass several and they are layered left to right onto the " +
+      "base data, so ['state-scale-done', 'state-report-ready'] gives an " +
+      "account that has both. Later names win where two set the same field. " +
+      "Prefer composing small state fragments over hunting for one scene that " +
+      "happens to have everything, because most named states differ only in a " +
+      "field or two of the same home-state response.\n" +
+      "With no argument it reports what is loaded and every name available.",
     inputSchema: {
       type: "object",
       properties: {
+        scenes: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Fixture names to layer, in order. Omit to just report what is loaded.",
+        },
         scene: {
           type: "string",
-          description: "Fixture scene name; omit to just report what is loaded",
+          description:
+            "A single fixture name, for when only one is needed. Ignored if `scenes` is given.",
         },
       },
     },
+  },
+  {
+    name: "mp_ws_push",
+    description:
+      "Push one chat stream event to the app over the websocket, right now. " +
+      "Use this when a case is about the STREAM ITSELF rather than about a " +
+      "response body: the same event arriving twice, deltas that never get a " +
+      "commit, a snapshot landing after deltas, a whole generation replayed in " +
+      "order. Fixtures cannot express those -- a fixture describes a response, " +
+      "not a moment -- so drive them here, one call per event, in the order the " +
+      "case names.\n" +
+      "`event` is the wire envelope, in snake_case:\n" +
+      '  {"event_id": "e1", "chat_id": "<id>", "generation_id": "gen-1", ' +
+      '"seq_id": "0", "event_type": "CHAT_STREAM_EVENT_TYPE_ASSISTANT_DELTA", ' +
+      '"delta": "你"}\n' +
+      "event_type is one of ASSISTANT_DELTA, MESSAGE_SNAPSHOT, COMPLETED, " +
+      "FINAL_MESSAGE_COMMITTED, BLOCKED, FAILED, HEARTBEAT, SUBSCRIBED, " +
+      "RECOMMENDED_QUESTIONS_READY, each prefixed CHAT_STREAM_EVENT_TYPE_. " +
+      "Keep generation_id the same across one turn's events, and give each " +
+      "event a distinct event_id unless the case is specifically about a " +
+      "duplicate. chat_id and generation_id have to match the chat that is " +
+      "actually open -- read them off the page first; an event for some other " +
+      "chat is delivered and then ignored, which looks exactly like a bug in " +
+      "the app.\n" +
+      "The app subscribes when a chat page opens. This fails if nothing is " +
+      "subscribed, rather than letting the event go nowhere and the assertion " +
+      "fail far from the cause.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        event: {
+          type: "object",
+          description: "The event envelope to deliver, as described above.",
+          additionalProperties: true,
+        },
+      },
+      required: ["event"],
+    },
+  },
+  {
+    name: "mp_ws_disconnect",
+    description:
+      "Drop the app's websocket connection, for cases about reconnection and " +
+      "catching up: what the client does when the stream dies mid-turn, and " +
+      "whether it recovers from the committed message store rather than from " +
+      "whatever it had buffered. Pair it with mp_ws_push to script the events " +
+      "on either side of the break.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "mp_swipe",
@@ -877,27 +1100,14 @@ const handlers = {
       await mp.navigateBack();
       return "Navigated back.";
     }
-    const resolved = resolveRoute(route);
-    if (!resolved) {
-      throw new Error(
-        `Unknown route "${route}". Use one of ${Object.keys(ROUTES).join(", ")}, ` +
-          `a Chinese name such as ${Object.keys(ROUTE_ALIASES).slice(0, 4).join("/")}, ` +
-          "or an absolute path starting with /."
-      );
-    }
-    const { key, path } = resolved;
-    const how =
-      method !== "auto" ? method : key && TAB_ROUTES.has(key) ? "switchTab" : "reLaunch";
+    const { path, isTab } = await resolveRoute(route);
+    const how = method !== "auto" ? method : isTab ? "switchTab" : "reLaunch";
     await mp[how](path);
     return `${how} -> ${path}`;
   },
 
   async mp_snapshot() {
-    const mp = await getMiniProgram();
-    const page = await mp.currentPage();
-    const root = await page.$("page");
-    if (!root) return `Page ${page.path} exposed no root node.`;
-    const nodes = parseWxml(await root.wxml());
+    const { page, nodes } = await readPage();
     return `Page: ${page.path}\n${formatSnapshot(nodes)}`;
   },
 
@@ -961,11 +1171,7 @@ const handlers = {
   },
 
   async mp_tap_text({ text, exact = false }) {
-    const mp = await getMiniProgram();
-    const page = await mp.currentPage();
-    const root = await page.$("page");
-    if (!root) throw new Error(`Page ${page.path} exposed no root node.`);
-    const nodes = parseWxml(await root.wxml());
+    const { page, nodes } = await readPage();
     const hits = findByText(nodes, text, exact);
     if (!hits.length) {
       const visible = nodes.filter((n) => n.text).map((n) => n.text);
@@ -1055,37 +1261,60 @@ const handlers = {
     );
   },
 
-  async mp_use_fixture({ scene } = {}) {
-    const url = `${GATEWAY_CONTROL.replace(/\/$/, "")}/fixture`;
-    let res;
-    try {
-      res = scene
-        ? await fetch(url, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ scene }),
-          })
-        : await fetch(url);
-    } catch (err) {
-      throw new Error(
-        `Could not reach the gateway control port at ${url} (${err.message}). ` +
-          "The mock gateway has to be running with a control port: start it with " +
-          "gateway.mts, which opens 39102 by default."
+  async mp_use_fixture({ scenes, scene } = {}) {
+    // Accepts an array, or a single name, or a comma separated string -- a
+    // model that has only ever seen the old single-scene form still lands on
+    // something the gateway understands.
+    const names = (Array.isArray(scenes) ? scenes : String(scenes ?? scene ?? "").split(","))
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+    const body = names.length
+      ? await gatewayCall("POST", "/fixture", { scenes: names })
+      : await gatewayCall("GET", "/fixture");
+    if (!names.length) {
+      const { hercules = [], upstream = [] } = body.available ?? {};
+      return (
+        `Backend data is [${(body.scenes ?? []).join(" + ")}].\n` +
+        `State fragments (compose these): ${hercules.join(", ") || "(none)"}\n` +
+        `Whole scenes: ${upstream.join(", ")}`
       );
     }
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok || body.ok === false) {
-      throw new Error(body.error || `Gateway refused the fixture switch (${res.status}).`);
-    }
-    if (!scene) {
-      return `Fixture scene "${body.scene}". Available: ${(body.scenes ?? []).join(", ")}`;
-    }
-    // The scene can redefine the user that mp_login_as seeds storage from.
+    // The fixture can redefine the user that mp_login_as seeds storage from.
     if (body.defaults && Object.keys(body.defaults).length) FIXTURE = body.defaults;
     return (
-      `Backend data is now scene "${body.scene}". Set the login state after this, ` +
-      "not before, so it is seeded from this scene."
+      `Backend data is now [${(body.scenes ?? names).join(" + ")}]. Set the login ` +
+      "state after this, not before, so it is seeded from this data."
     );
+  },
+
+  async mp_ws_push({ event }) {
+    if (!event || typeof event !== "object") {
+      throw new Error("mp_ws_push needs an `event` object -- the wire envelope to deliver.");
+    }
+    // A push with nobody subscribed is accepted by the gateway and delivered to
+    // no one. Say so here rather than letting the case fail three steps later
+    // on a bubble that never appeared.
+    const status = await gatewayCall("GET", "/ws");
+    if (!(status.connected > 0)) {
+      throw new Error(
+        "No websocket client is connected, so this event would go nowhere. The " +
+          "app subscribes when a chat is open and a turn is live -- open the " +
+          "chat and send a message first."
+      );
+    }
+    const result = await gatewayCall("POST", "/ws/push", event);
+    if (!(result.pushed > 0)) {
+      throw new Error("The gateway accepted the event but delivered it to no client.");
+    }
+    return `Pushed ${event.event_type || "event"} (event_id=${event.event_id ?? "-"}) to ${result.pushed} client(s).`;
+  },
+
+  async mp_ws_disconnect() {
+    const result = await gatewayCall("POST", "/ws/disconnect");
+    if (!(result.disconnected > 0)) {
+      throw new Error("There was no connected websocket client to drop.");
+    }
+    return `Dropped ${result.disconnected} websocket client(s).`;
   },
 
   async mp_swipe({ text, selector, direction, distance = 80, until }) {
@@ -1102,9 +1331,9 @@ const handlers = {
         return { el, label: selector };
       }
       // Page-level gestures are bound to a container with no text of its own.
-      const el = await page.$("page");
-      if (!el) throw new Error(`Page ${page.path} exposed no root node.`);
-      return { el, label: `page ${page.path}` };
+      const roots = await pageRoots(page);
+      if (!roots.length) throw new Error(`Page ${page.path} rendered no nodes to gesture on.`);
+      return { el: roots[0].el, label: `page ${page.path}` };
     };
 
     const axis = direction === "left" || direction === "right" ? "clientX" : "clientY";
@@ -1223,7 +1452,8 @@ const handlers = {
     await mp.callWxMethod("clearStorageSync");
 
     if (preset === "guest") {
-      await mp.switchTab(ROUTES.home);
+      const home = await resolveRoute("home");
+      await mp[home.isTab ? "switchTab" : "reLaunch"](home.path);
       return "Guest state: storage cleared, on the home page.";
     }
 
@@ -1242,7 +1472,7 @@ const handlers = {
     for (const [k, v] of Object.entries(FIXTURE.storage ?? {})) {
       await mp.callWxMethod("setStorageSync", k, v);
     }
-    await mp.reLaunch(ROUTES.home);
+    await mp.reLaunch((await resolveRoute("home")).path);
     return `Signed in as ${user.nickname || user.user_id || "the fixture user"}, on the home page.`;
   },
 
