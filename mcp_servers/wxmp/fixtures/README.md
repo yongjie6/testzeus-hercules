@@ -48,7 +48,7 @@ JSON。
 组合，比如「有候选关系 + 对方报告已就绪」：
 
 ```
-mp_use_fixture(scenes=["state-candidate-1", "state-counterpart-report-ready"])
+mp_use_fixture(scenes=["state-chat-history-6", "state-report-many-tabs"])
 ```
 
 `gateway.mts` 按顺序**深合并**（上游的 `mergeFixtures` 只做一层浅合并，两个片段都碰
@@ -58,6 +58,37 @@ GetHomeState 时后一个会把前一个整个盖掉）。数组是替换不是�
 一个片段只描述一个轴，只写它要改的字段，其余交给 `base`。**先看 `base` 或前端已发布的
 `TC-*` 有没有现成的**——`base` 本身就是"已登录、资料填完、量表已关联"，`TC-ASSESS-001`
 本身就是"从第 1 题开始、无历史答题"，都不需要再写 Hercules 侧片段。
+
+## 写完必须在界面上验一遍，HTTP 层通过不算数
+
+`state-candidate-1` 这个片段是这么废掉的：curl 打 `home/state` 返回完全正确，
+候选关系一条、昵称对得上——然后首页只渲染出一个 `1`，卡片压根不出来。
+
+因为 app 读的是 `group.relationships[].counterpartUser`，片段写的是
+`candidates[].targetUser`。**数组名和字段名都错了，但 HTTP 层看不出来**：网关照单全收，
+返回的 JSON 自己是自洽的，只有界面知道它读不到。
+
+所以片段写完至少要：`mp_use_fixture` → `mp_login_as` → 跳到目标页 → `mp_snapshot`，
+确认要断言的东西真的在快照里。字段名一律对着
+`packages/esm-proto-generated/src/idl/esm/v1/*.ts` 里的 interface 抄，别照着别的
+fixture 的印象写。
+
+## 交互链路要连着覆盖，不能只覆盖首屏
+
+同一个片段还踩了第二个坑：修好字段名之后卡片渲染出来了，点下去却不跳转——因为点击
+会调 `POST /relationship-chat/start`，那个接口没被覆盖，返回空响应。
+
+`GET /calls` 当场就能定位这种缺口：
+
+```bash
+curl -s http://127.0.0.1:39102/calls
+```
+
+它列出应用实际请求过的接口，`uncovered` 就是回来是空响应的那些。**一个交互动作往往牵扯
+不止一个接口，只覆盖列表接口的片段能渲染、不能点。**
+
+上游的 `TC-HOME-001/candidate-mutation` 已经把「候选关系列表 + 点进去建关系」整条链路
+覆盖全了，所以 `state-candidate-1` 直接删掉改用它——先翻上游再动手写，这条是有代价的。
 
 ## 现有片段
 
@@ -74,7 +105,7 @@ GetHomeState 时后一个会把前一个整个盖掉）。数组是替换不是�
 | 答题 | `TC-ASSESS-001` + `state-assessment-mid` | 已作答到第 33 题，断点在第 34 题 |
 | 报告 | `TC-REPORT-001`（上游） | 个人报告已就绪、未读、1 个 tab |
 | 报告 | `state-report-many-tabs` | 个人报告 4 个 tab，一个超长（首屏放不下）一个简短（放得下） |
-| 候选关系 | `state-candidate-1` | 候选关系 1 条，此前从未对话过 |
+| 候选关系 | `TC-HOME-001/candidate-mutation`（上游） | 候选关系 1 条，**且覆盖了点进去建关系那一跳**；自己写片段只覆盖首页列表的话，点了不会跳转 |
 | 对方报告 | `state-counterpart-report-ready` | 候选/关系对象的对外报告（`external_v1`）已就绪，Markdown 正文 |
 | 关系对话 | `TC-HOME-001/snapshot`（上游，注意带 `/`） | 关系对话 1 条，已设标签和备注 |
 | 关系对话 | `state-relationship-chat-untagged` | 关系对话 1 条，有备注、无标签 |

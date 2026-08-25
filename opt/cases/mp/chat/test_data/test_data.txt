@@ -47,7 +47,7 @@ MCP 工具够不到。这种情况先用 mmcp_wxmp_mp_webview_url 读出真实 U
 用例的 Given 长这样：
 
 ```
-Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
+Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
 ```
 
 执行顺序是**先数据后登录**，两步：
@@ -67,6 +67,21 @@ Given 里没有「后端数据用」的，用默认 `base`，不要调 `mp_use_f
 用例上方带 `# ⛔ 当前不可执行` 注释的，是已经确认当前环境或实现下跑不出结果的
 （微信原生弹窗点不到、前端功能没实现、mock 网关造不出那种时序）。注释里写了具体原因。
 遇到这种直接跳过并如实报告原因，不要尝试绕过去凑一个通过。
+
+## 输入框与发送按钮
+
+发送按钮**只在输入框有内容时才存在**。空输入时那个位置渲染的是「语音」按钮，
+这时候找「发送」必然找不到——不是用例写错，是顺序问题。
+
+所以 `输入「…」` 那一步必须真的生效，再点发送：
+
+1. `mmcp_wxmp_mp_trigger`，`into` 传输入框的 placeholder（对话页是 `请输入消息...`），
+   `event` 传 `input`，`detail` 传 `{"value": "要输入的文字"}`
+2. 用 `mmcp_wxmp_mp_snapshot` 确认输入框的 `value` 变了、并且「发送」按钮出现了
+3. 再 `mmcp_wxmp_mp_tap_text` 点「发送」
+
+第 2 步别省。输入没生效时，第 3 步的报错是「找不到发送」，看上去像按钮文案不对，
+实际是上一步没写进去。
 
 ## 环境说明
 

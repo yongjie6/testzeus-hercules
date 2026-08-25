@@ -8,38 +8,38 @@ Feature: 小程序对话
   # 快照对同文案无 id 的重复节点会去重，计数优先走 page data。
 
   Scenario: TC-ESM-033-L1-0 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
-    When 点击「候选关系卡片」
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
+    When 点击「候选关系小周」
     Then 初次进入关系对话后 AI 侧展示的开场消息条数应该不少于 1
 
   Scenario: TC-ESM-033-L1-1 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
-    When 点击「候选关系卡片」
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
+    When 点击「候选关系小周」
     Then 应该看到「对方报告」
 
   Scenario: TC-ESM-033-L1-2 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
-    When 点击「候选关系卡片」
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
+    When 点击「候选关系小周」
     Then 应该看到「说说你们的情况好吗？请问你们是什么关系呢？」
 
   Scenario: TC-ESM-033-L1-4 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
     When 点击「推荐问题」
     Then 不应该看到「被点击的那条推荐问题在推荐区里的残留」
 
   Scenario: TC-ESM-033-L1-5 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
     When 点击「推荐问题」
     Then 会话中与所点推荐问题正文一致的用户提问气泡条数应该不少于 1
 
   Scenario: TC-ESM-033-L1-6 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1
-    When 点击「候选关系卡片」
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
+    When 点击「候选关系小周」
     Then 不应该看到「对方报告」
 
   Scenario: TC-ESM-033-L1-7 关系对话初次进入的开场、问询与推荐问题转化
-    Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1
-    When 点击「候选关系卡片」
+    Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
+    When 点击「候选关系小周」
     Then 对方报告不可用时初次进入关系对话所展示的关系问询消息条数应该不少于 1
 
   Scenario: TC-ESM-039-L1-0 对话页会话恢复、报告跳转、身份标签与右滑返回

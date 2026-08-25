@@ -47,7 +47,7 @@ MCP 工具够不到。这种情况先用 mmcp_wxmp_mp_webview_url 读出真实 U
 用例的 Given 长这样：
 
 ```
-Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
+Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
 ```
 
 执行顺序是**先数据后登录**，两步：
