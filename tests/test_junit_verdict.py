@@ -37,15 +37,11 @@ def _verdict(json_data: dict[str, Any]) -> bool:
 
 
 def test_a_passing_assertion_passes() -> None:
-    assert not _verdict(
-        {"is_assert": True, "is_passed": True, "terminate": "yes", "assert_summary": "ok"}
-    )
+    assert not _verdict({"is_assert": True, "is_passed": True, "terminate": "yes", "assert_summary": "ok"})
 
 
 def test_a_failing_assertion_fails() -> None:
-    assert _verdict(
-        {"is_assert": True, "is_passed": False, "terminate": "yes", "assert_summary": "bad"}
-    )
+    assert _verdict({"is_assert": True, "is_passed": False, "terminate": "yes", "assert_summary": "bad"})
 
 
 def test_stopping_without_asserting_fails() -> None:
@@ -72,10 +68,5 @@ def test_the_reason_reaches_the_report() -> None:
         1.0,
         {},
     )
-    messages = [
-        r.message
-        for case in generator.suite
-        for r in (case.result if isinstance(case.result, list) else [case.result])
-        if isinstance(r, Failure)
-    ]
+    messages = [r.message for case in generator.suite for r in (case.result if isinstance(case.result, list) else [case.result]) if isinstance(r, Failure)]
     assert any("400" in (m or "") for m in messages), "the cause was dropped"

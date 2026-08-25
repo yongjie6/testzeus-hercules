@@ -55,8 +55,7 @@ def adapt_llm_params_for_model(model_name: str, llm_config: Dict[str, Any]) -> D
         if "max_tokens_to_sample" in params and "max_tokens" not in params:
             params["max_tokens"] = params.pop("max_tokens_to_sample")
             logger.warning(
-                "'max_tokens_to_sample' supplied for %s; that is the legacy completions "
-                "parameter. Using 'max_tokens', which is what a chat endpoint accepts.",
+                "'max_tokens_to_sample' supplied for %s; that is the legacy completions " "parameter. Using 'max_tokens', which is what a chat endpoint accepts.",
                 model_name,
             )
         params.pop("max_tokens_to_sample", None)

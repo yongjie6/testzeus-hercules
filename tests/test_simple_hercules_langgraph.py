@@ -26,9 +26,7 @@ class FakeLLM:
 
 
 class FakeAgent:
-    def __init__(
-        self, name: str, responses: list[AIMessage], tools: list[Any] | None = None
-    ) -> None:
+    def __init__(self, name: str, responses: list[AIMessage], tools: list[Any] | None = None) -> None:
         self.agent_name = name
         self.system_message = f"{name} system"
         self.llm = FakeLLM(responses)
@@ -91,12 +89,8 @@ def test_nav_agent_executes_multiple_non_stale_tool_calls_in_order() -> None:
             return "second result"
 
         tools = [
-            StructuredTool.from_function(
-                func=first_tool, name="first", description="first"
-            ),
-            StructuredTool.from_function(
-                func=second_tool, name="second", description="second"
-            ),
+            StructuredTool.from_function(func=first_tool, name="first", description="first"),
+            StructuredTool.from_function(func=second_tool, name="second", description="second"),
         ]
         agent = FakeAgent(
             "api_nav_agent",
@@ -137,23 +131,13 @@ def test_nav_agent_reports_invalid_tool_arguments() -> None:
                 ),
                 AIMessage(content="current_output: handled\n##TERMINATE TASK##"),
             ],
-            [
-                StructuredTool.from_function(
-                    func=first_tool, name="first", description="first"
-                )
-            ],
+            [StructuredTool.from_function(func=first_tool, name="first", description="first")],
         )
 
-        result = await _hercules()._run_nav_agent(
-            agent, "call malformed", "api_nav_agent"
-        )
+        result = await _hercules()._run_nav_agent(agent, "call malformed", "api_nav_agent")
 
         assert "##TERMINATE TASK##" in result
-        tool_messages = [
-            message
-            for message in agent.llm.calls[1]
-            if isinstance(message, ToolMessage)
-        ]
+        tool_messages = [message for message in agent.llm.calls[1] if isinstance(message, ToolMessage)]
         assert tool_messages
         assert "expected tool arguments to be a dict" in tool_messages[-1].content
 
@@ -166,10 +150,7 @@ def test_browser_stale_dom_guard_skips_later_tool_calls() -> None:
 
         def click() -> str:
             calls.append("click")
-            return (
-                "Success. As a consequence of this action, new elements have appeared "
-                "in view. Get all_fields DOM to complete the interaction."
-            )
+            return "Success. As a consequence of this action, new elements have appeared " "in view. Get all_fields DOM to complete the interaction."
 
         def get_page_text() -> str:
             calls.append("get_page_text")
@@ -177,9 +158,7 @@ def test_browser_stale_dom_guard_skips_later_tool_calls() -> None:
 
         tools = [
             StructuredTool.from_function(func=click, name="click", description="click"),
-            StructuredTool.from_function(
-                func=get_page_text, name="get_page_text", description="read"
-            ),
+            StructuredTool.from_function(func=get_page_text, name="get_page_text", description="read"),
         ]
         agent = FakeAgent(
             "browser_nav_agent",
@@ -196,18 +175,12 @@ def test_browser_stale_dom_guard_skips_later_tool_calls() -> None:
             tools,
         )
 
-        result = await _hercules()._run_nav_agent(
-            agent, "click then read", "browser_nav_agent"
-        )
+        result = await _hercules()._run_nav_agent(agent, "click then read", "browser_nav_agent")
 
         assert calls == ["click"]
         assert "##TERMINATE TASK##" in result
         second_call_messages = agent.llm.calls[1]
-        assert any(
-            isinstance(message, HumanMessage)
-            and "browser state changed" in message.content
-            for message in second_call_messages
-        )
+        assert any(isinstance(message, HumanMessage) and "browser state changed" in message.content for message in second_call_messages)
 
     asyncio.run(run())
 
@@ -260,9 +233,7 @@ def test_helper_task_prefers_live_current_url(monkeypatch) -> None:
 
 
 def test_cost_metrics_include_langgraph_token_totals() -> None:
-    metrics = _hercules()._build_cost_metrics(
-        {"total_prompt_tokens": 7, "total_completion_tokens": 11}
-    )
+    metrics = _hercules()._build_cost_metrics({"total_prompt_tokens": 7, "total_completion_tokens": 11})
 
     usage = metrics["usage_including_cached_inference"]["langgraph"]
     assert usage["prompt_tokens"] == 7
@@ -304,11 +275,7 @@ def test_executor_accumulates_nav_agent_token_usage() -> None:
                     },
                 )
             ],
-            [
-                StructuredTool.from_function(
-                    func=lambda: "unused", name="available", description="available"
-                )
-            ],
+            [StructuredTool.from_function(func=lambda: "unused", name="available", description="available")],
         )
         hercules.agents_map = {"api_nav_agent": agent}
         result = await hercules._executor_node(
@@ -394,17 +361,11 @@ def test_nav_agent_max_rounds_returns_explicit_error() -> None:
                     tool_calls=[{"name": "missing", "args": {}, "id": "call_2"}],
                 ),
             ],
-            [
-                StructuredTool.from_function(
-                    func=lambda: "unused", name="available", description="available"
-                )
-            ],
+            [StructuredTool.from_function(func=lambda: "unused", name="available", description="available")],
         )
         hercules = SimpleHercules(stake_id="test", browser_nav_max_chat_round=2)
 
-        result = await hercules._run_nav_agent(
-            agent, "do impossible thing", "api_nav_agent"
-        )
+        result = await hercules._run_nav_agent(agent, "do impossible thing", "api_nav_agent")
 
         assert result.startswith("[ERROR] api_nav_agent max nav rounds")
         assert "[empty or tool-calls-only assistant response]" in result
@@ -426,9 +387,7 @@ def test_graph_chat_result_summary_uses_terminal_planner_json() -> None:
                 content="",
                 tool_calls=[{"name": "tool", "args": {}, "id": "call_1"}],
             ),
-            AIMessage(
-                content=json.dumps({"terminate": "no", "next_step": "keep going"})
-            ),
+            AIMessage(content=json.dumps({"terminate": "no", "next_step": "keep going"})),
             AIMessage(content=json.dumps(terminal)),
         ],
         terminate="yes",

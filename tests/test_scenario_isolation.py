@@ -89,9 +89,7 @@ def captured(monkeypatch) -> list[dict]:
 
 
 def test_scenarios_after_a_failure_still_run(captured) -> None:
-    assert _FakeRunner.started == ["first", "boom", "third"], (
-        "the scenario after the failing one never started"
-    )
+    assert _FakeRunner.started == ["first", "boom", "third"], "the scenario after the failing one never started"
 
 
 def test_every_scenario_is_reported(captured) -> None:
@@ -109,9 +107,7 @@ def test_healthy_scenarios_keep_their_own_result(captured) -> None:
     assert ok.get("is_passed") is True
 
 
-def test_the_report_actually_marks_the_aborted_scenario_failed(
-    captured, tmp_path, monkeypatch
-) -> None:
+def test_the_report_actually_marks_the_aborted_scenario_failed(captured, tmp_path, monkeypatch) -> None:
     """The dict saying is_passed=False is not enough; JUnit has to agree.
 
     build_junit_xml only consults is_passed when is_assert is set, and
@@ -138,13 +134,9 @@ def test_the_report_actually_marks_the_aborted_scenario_failed(
 
     failed = next(e for e in captured if e["scenario"] == "boom")["result"]
     blank = str(tmp_path)
-    generator = JUnitXMLGenerator(
-        "F", blank, blank, blank, blank, blank, blank, blank, blank
-    )
+    generator = JUnitXMLGenerator("F", blank, blank, blank, blank, blank, blank, blank, blank)
     generator.add_test_case("boom", "F", failed, 1.0, {})
 
     results = [case.result for case in generator.suite]
     flattened = [r for entry in results for r in (entry if isinstance(entry, list) else [entry])]
-    assert any(isinstance(r, Failure) for r in flattened), (
-        "an aborted scenario was reported as a pass"
-    )
+    assert any(isinstance(r, Failure) for r in flattened), "an aborted scenario was reported as a pass"

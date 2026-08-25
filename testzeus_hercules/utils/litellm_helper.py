@@ -45,11 +45,7 @@ def get_litellm_chat_model(agent_name: str = "planner_agent") -> BaseChatModel:
     ensure_litellm_provider()
     agent_cfg = AgentsLLMConfigManager.get_instance().get_agent_config(agent_name)
     model_config_params = agent_cfg.get("model_config_params", {})
-    missing_fields = [
-        field
-        for field in ("model_api_key", "model_base_url")
-        if not model_config_params.get(field)
-    ]
+    missing_fields = [field for field in ("model_api_key", "model_base_url") if not model_config_params.get(field)]
     if missing_fields:
         logger.warning(
             "LiteLLM chat model config for %s is missing required field(s): %s",
