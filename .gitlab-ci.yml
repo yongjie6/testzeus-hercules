@@ -13,9 +13,13 @@
 # 为什么提交时不跑 E2E：每条用例都是 LLM 驱动的，一条几分钟、真花钱，全量 74 条是
 # 小时级。挂到每次 commit 上既拦不住人也付不起。
 
+# image 必须在 lint 之前：lint 用的就是 image 阶段构建的镜像。反过来排的话，第一次
+# pipeline 里 lint 会因为拉不到 ci:latest 失败，build-ci-image 永远轮不到跑——
+# 自举卡死。Dockerfile.ci / uv.lock / pyproject.toml 没变时 image 阶段整个跳过，
+# 不会给日常提交加时间。
 stages:
-  - lint
   - image
+  - lint
   - e2e
 
 variables:
@@ -78,6 +82,10 @@ lint:
 
 # ── CI 镜像 ───────────────────────────────────────────────────────────────────
 # 设计第 8 章：构建 Runner 不用 privileged DinD / hostPath / docker socket，走 kaniko。
+#
+# 自举：仓库刚推上来时 registry 里还没有 ci:latest，lint 和 e2e 都拉不到镜像。
+# 第一次要在 GitLab UI 上 Run pipeline 手动跑一次这个 job（web 触发下它是 manual）。
+# 之后只有 Dockerfile.ci / uv.lock / pyproject.toml 变了才会重建。
 build-ci-image:
   stage: image
   image:
