@@ -21,7 +21,7 @@ Feature: ESM V3.0 网关接口：运行时状态、登录态、资料与首页�
     Given 用 esm_new_user 建一个标签为 "A" 的用户，填资料，不做量表
     When 调用 GET /api/esm/v1/user/me，用标签 "A"
     Then statusCode 应该是 "0"
-    And body.user.userId 应该等于标签 "A" 的 userId
+    And body.user.userId 应该等于 ${A_userId}
     When 不带登录态调用 GET /api/esm/v1/user/me
     Then bizCodeName 应该是 "BIZ_GATEWAY_UNAUTHORIZED"
 
@@ -100,7 +100,7 @@ Feature: ESM V3.0 网关接口：运行时状态、登录态、资料与首页�
     Then statusCode 应该是 "0"
     And body.entryStage 应该是 "HOME_ENTRY_STAGE_HOME"
     And body.hasUnfinishedAnswering 应该是 false
-    And body.latestResult.resultId 应该等于标签 "A" 的 resultId
+    And body.latestResult.resultId 应该等于 ${A_resultId}
     And body.canCreateRelationshipShare 应该是 true
     And body.relationshipSlotQuota.maxCount 应该是 20
     And body.relationshipSlotQuota.usedCount 应该是 0

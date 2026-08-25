@@ -21,15 +21,15 @@ Feature: ESM V3.0 答题与量表结果接口
     And body.questions 第 1 条的 choices 的 choiceValue 应该依次是 1 到 6
 
   Scenario: TC-ESM30-AS-02 重复进入答题只返回同一个进行中的 session
-    When 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
+    When 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
     And 再次调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"
     Then statusCode 应该是 "0"
-    And body.session.sessionId 应该和上一次记下的 sessionId 相同
+    And body.session.sessionId 应该等于 ${sessionId}
     And body.session.attemptNo 应该是 1
 
   Scenario: TC-ESM30-AS-03 顺序提交答案推进进度并返回下一题
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<上一步的 sessionId>", "questionNo": 1, "choiceValue": 3}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 3}
     Then statusCode 应该是 "0"
     And body.savedAnswer.questionNo 应该是 1
     And body.savedAnswer.choiceValue 应该是 3
@@ -41,19 +41,19 @@ Feature: ESM V3.0 答题与量表结果接口
     And body.session.answeredCount 应该是 1
 
   Scenario: TC-ESM30-AS-04 重复提交完全相同的答案按幂等处理
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    And 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 1, "choiceValue": 3}，记下 savedAnswer.answeredAtMs
-    When 再次调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 1, "choiceValue": 3}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    And 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 3}，用 extract_json 捕获 {"answeredAtMs": "$.body.savedAnswer.answeredAtMs"}
+    When 再次调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 3}
     Then statusCode 应该是 "0"
     And body.savedAnswer.answerVersion 应该是 1
     And body.savedAnswer.modified 应该是 false
-    And body.savedAnswer.answeredAtMs 应该和上一步记下的值相同
+    And body.savedAnswer.answeredAtMs 应该等于 ${answeredAtMs}
     And body.session.answeredCount 应该是 1
 
   Scenario: TC-ESM30-AS-05 回退改答递增答案版本并标记已修改
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
     And 依次提交第 1 到第 4 题，choiceValue 都传 3
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 2, "choiceValue": 5}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 2, "choiceValue": 5}
     Then statusCode 应该是 "0"
     And body.savedAnswer.questionNo 应该是 2
     And body.savedAnswer.choiceValue 应该是 5
@@ -66,23 +66,23 @@ Feature: ESM V3.0 答题与量表结果接口
     And body.savedAnswers 里第 4 题的 choiceValue 应该是 3
 
   Scenario: TC-ESM30-AS-06 题号越界被拒
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 0, "choiceValue": 3}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 0, "choiceValue": 3}
     Then bizCodeName 应该是 "BIZ_ESM_ASSESSMENT_QUESTION_OUT_OF_RANGE"
     And canonicalCode 应该是 "CANONICAL_ERROR_CODE_INVALID_PARAMETER"
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 145, "choiceValue": 3}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 145, "choiceValue": 3}
     Then bizCodeName 应该是 "BIZ_ESM_ASSESSMENT_QUESTION_OUT_OF_RANGE"
 
   Scenario: TC-ESM30-AS-07 选项值越界被拒
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 1, "choiceValue": 0}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 0}
     Then bizCodeName 应该是 "BIZ_ESM_ASSESSMENT_QUESTION_OUT_OF_RANGE"
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 1, "choiceValue": 7}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 7}
     Then bizCodeName 应该是 "BIZ_ESM_ASSESSMENT_QUESTION_OUT_OF_RANGE"
 
   Scenario: TC-ESM30-AS-08 跳答还没到的题号被拒且进度不变
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 3, "choiceValue": 3}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    When 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 3, "choiceValue": 3}
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_ASSESSMENT_QUESTION_OUT_OF_RANGE"
     When 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"
@@ -96,16 +96,16 @@ Feature: ESM V3.0 答题与量表结果接口
     And canonicalCode 应该是 "CANONICAL_ERROR_CODE_NOT_FOUND"
 
   Scenario: TC-ESM30-AS-10 重新开始必须带确认标记
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    And 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 1, "choiceValue": 3}
-    When 调用 POST /api/esm/v1/answering/restart，用标签 "A"，body 传 {"previousSessionId": "<sessionId>", "confirmed": false}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    And 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 3}
+    When 调用 POST /api/esm/v1/answering/restart，用标签 "A"，body 传 {"previousSessionId": "${sessionId}", "confirmed": false}
     Then statusCode 不应该是 "0"
     And statusMsg 应该包含 "confirmation required"
 
   Scenario: TC-ESM30-AS-11 确认后重新开始，新 session 从第一题起且尝试次数递增
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
-    And 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "<sessionId>", "questionNo": 1, "choiceValue": 3}
-    When 调用 POST /api/esm/v1/answering/restart，用标签 "A"，body 传 {"previousSessionId": "<sessionId>", "confirmed": true}
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    And 调用 POST /api/esm/v1/answering/answer，用标签 "A"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 3}
+    When 调用 POST /api/esm/v1/answering/restart，用标签 "A"，body 传 {"previousSessionId": "${sessionId}", "confirmed": true}
     Then statusCode 应该是 "0"
     And body.session.sessionId 不应该等于原来的 sessionId
     And body.session.attemptNo 应该是 2
@@ -115,11 +115,11 @@ Feature: ESM V3.0 答题与量表结果接口
     And body.questions 应该有 144 条
 
   Scenario: TC-ESM30-AS-12 断点续答返回已保存答案和当前题号
-    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，记下 sessionId
+    Given 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
     And 依次提交第 1 到第 5 题，choiceValue 都传 4
     When 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "A"
     Then statusCode 应该是 "0"
-    And body.session.sessionId 应该和记下的 sessionId 相同
+    And body.session.sessionId 应该等于 ${sessionId}
     And body.session.currentQuestionNo 应该是 6
     And body.session.answeredCount 应该是 5
     And body.savedAnswers 应该有 5 条

@@ -55,25 +55,25 @@ Feature: ESM V3.0 报告与关系接口
     Then found 应该是 true
     And status 应该是 "REPORT_STATUS_READY"
     And contentLength 应该大于 0
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportType": "personal_detail_v1", "subjectUserId": "<标签 A 的 userId>"}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportType": "personal_detail_v1", "subjectUserId": "${A_userId}"}
     Then statusCode 应该是 "0"
     And body.report.status 应该是 "REPORT_STATUS_READY"
-    And body.report.subjectUserId 应该等于标签 "A" 的 userId
-    And body.report.resultId 应该等于标签 "A" 的 resultId
+    And body.report.subjectUserId 应该等于 ${A_userId}
+    And body.report.resultId 应该等于 ${A_resultId}
     And body.report.reportType 应该是 "personal_detail_v1"
     And body.report.reportContent 应该非空
 
   # 前置约 3 分钟
   Scenario: TC-ESM30-PF-08 标记已读按查看人记录并回落到首页红点
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
-    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，记下 reportId
+    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，用 extract_json 捕获 {"reportId": "$.reportId"}
     When 调用 GET /api/esm/v1/home/state，用标签 "A"
     Then body.myPage.personalReportUnread 应该是 true
-    When 调用 POST /api/esm/v1/report/viewed，用标签 "A"，body 传 {"reportId": "<reportId>"}
+    When 调用 POST /api/esm/v1/report/viewed，用标签 "A"，body 传 {"reportId": "${reportId}"}
     Then statusCode 应该是 "0"
     And body.reportStatusWhenViewed 应该是 "REPORT_STATUS_READY"
     And body.viewedAtMs 应该大于 0
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "<reportId>"}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "${reportId}"}
     Then body.report.viewed 应该是 true
     When 调用 GET /api/esm/v1/home/state，用标签 "A"
     Then body.latestReport.viewed 应该是 true
@@ -82,28 +82,27 @@ Feature: ESM V3.0 报告与关系接口
   # 前置约 3 分钟
   Scenario: TC-ESM30-PF-09 同一报告模块重复反馈覆盖同一条记录
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
-    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，记下 reportId
-    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "<reportId>", "tabTitle": "爱情", "subtitle": "你要的亲密", "score": "REPORT_CONTENT_FEEDBACK_SCORE_LIKE"}
+    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，用 extract_json 捕获 {"reportId": "$.reportId"}
+    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "${reportId}", "tabTitle": "爱情", "subtitle": "你要的亲密", "score": "REPORT_CONTENT_FEEDBACK_SCORE_LIKE"}，用 extract_json 捕获 {"feedbackId": "$.body.feedback.feedbackId"}
     Then statusCode 应该是 "0"
     And body.feedback.score 应该是 "REPORT_CONTENT_FEEDBACK_SCORE_LIKE"
     And body.feedback.tabTitle 应该是 "爱情"
     And body.feedback.subtitle 应该是 "你要的亲密"
-    And 记下 body.feedback.feedbackId
-    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "<reportId>", "tabTitle": "爱情", "subtitle": "你要的亲密", "score": "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE"}
+    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "${reportId}", "tabTitle": "爱情", "subtitle": "你要的亲密", "score": "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE"}
     Then statusCode 应该是 "0"
-    And body.feedback.feedbackId 应该和上一步记下的相同
+    And body.feedback.feedbackId 应该等于 ${feedbackId}
     And body.feedback.score 应该是 "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE"
     And body.feedback.updatedAtMs 应该大于 body.feedback.createdAtMs
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "<reportId>"}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "${reportId}"}
     Then body.report.contentFeedbacks 应该有 1 条
     And body.report.contentFeedbacks 第 1 条的 score 应该是 "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE"
 
   # 前置约 6 分钟
   Scenario: TC-ESM30-PF-10 别人的个人报告读不到
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
-    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，记下 reportId
+    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，用 extract_json 捕获 {"reportId": "$.reportId"}
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    When 调用 GET /api/esm/v1/report，用标签 "B"，query 传 {"reportId": "<reportId>", "subjectUserId": "<标签 A 的 userId>"}
+    When 调用 GET /api/esm/v1/report，用标签 "B"，query 传 {"reportId": "${reportId}", "subjectUserId": "${A_userId}"}
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_PROFILE_REPORT_ACCESS_DENIED"
 
@@ -113,7 +112,7 @@ Feature: ESM V3.0 报告与关系接口
     When 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}
     Then statusCode 应该是 "0"
     And body.share.shareId 应该非空
-    And body.share.ownerUserId 应该等于标签 "A" 的 userId
+    And body.share.ownerUserId 应该等于 ${A_userId}
     And body.share.status 应该是 "RELATIONSHIP_SHARE_STATUS_ACTIVE"
     And body.share.launchPath 应该包含 "scene=home_invite"
     And body.share.launchPath 应该包含 body.share.shareId
@@ -121,8 +120,8 @@ Feature: ESM V3.0 报告与关系接口
   # 前置约 3 分钟
   Scenario: TC-ESM30-PF-12 自己绑定自己的分享被拒
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "A"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "A"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_PROFILE_SELF_BINDING_CONFLICT"
 
@@ -130,12 +129,12 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-13 双方都有量表结果时绑定分享直接建成候选关系
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
     Then statusCode 应该是 "0"
-    And body.binding.shareId 应该等于记下的 shareId
-    And body.binding.ownerUserId 应该等于标签 "A" 的 userId
-    And body.binding.visitorUserId 应该等于标签 "B" 的 userId
+    And body.binding.shareId 应该等于 ${shareId}
+    And body.binding.ownerUserId 应该等于 ${A_userId}
+    And body.binding.visitorUserId 应该等于 ${B_userId}
     And body.binding.status 应该是 "SHARE_BINDING_STATUS_CANDIDATE_CREATED"
     And body.candidateRelationship.candidateRelationshipId 应该非空
     And body.candidateRelationship.status 应该是 "CANDIDATE_RELATIONSHIP_STATUS_ACTIVE"
@@ -144,29 +143,29 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-14 候选关系是无方向的，双方都能在今天分组里看到对方
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}，记下 candidateRelationshipId
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}，用 extract_json 捕获 {"candidateRelationshipId": "$.body.binding.candidateRelationshipId"}
     When 调用 GET /api/esm/v1/relationships/candidates，用标签 "A"
     Then statusCode 应该是 "0"
     And body.groups 应该有 1 条
     And body.groups 第 1 条的 group 应该是 "CANDIDATE_RELATIONSHIP_TIME_GROUP_TODAY"
     And body.groups 第 1 条的 totalCount 应该是 1
-    And body.groups 第 1 条的 relationships 第 1 条的 candidateRelationshipId 应该等于记下的 candidateRelationshipId
-    And body.groups 第 1 条的 relationships 第 1 条的 counterpartUser.userId 应该等于标签 "B" 的 userId
+    And body.groups 第 1 条的 relationships 第 1 条的 candidateRelationshipId 应该等于 ${candidateRelationshipId}
+    And body.groups 第 1 条的 relationships 第 1 条的 counterpartUser.userId 应该等于 ${B_userId}
     And body.groups 第 1 条的 relationships 第 1 条的 counterpartUser.nickname 应该非空
     When 调用 GET /api/esm/v1/relationships/candidates，用标签 "B"
-    Then body.groups 第 1 条的 relationships 第 1 条的 candidateRelationshipId 应该等于记下的 candidateRelationshipId
-    And body.groups 第 1 条的 relationships 第 1 条的 counterpartUser.userId 应该等于标签 "A" 的 userId
+    Then body.groups 第 1 条的 relationships 第 1 条的 candidateRelationshipId 应该等于 ${candidateRelationshipId}
+    And body.groups 第 1 条的 relationships 第 1 条的 counterpartUser.userId 应该等于 ${A_userId}
 
   # 前置约 6 分钟
   Scenario: TC-ESM30-PF-15 重复绑定同一分享是幂等的，不会长出第二条候选关系
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}，记下 candidateRelationshipId
-    When 再次调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}，用 extract_json 捕获 {"candidateRelationshipId": "$.body.binding.candidateRelationshipId"}
+    When 再次调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
     Then statusCode 应该是 "0"
-    And body.binding.candidateRelationshipId 应该等于记下的 candidateRelationshipId
+    And body.binding.candidateRelationshipId 应该等于 ${candidateRelationshipId}
     When 调用 GET /api/esm/v1/relationships/candidates，用标签 "B"
     Then body.groups 第 1 条的 totalCount 应该是 1
 
@@ -174,10 +173,10 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-16 备注名和标签按当前用户维度保存，对方看不到
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}，记下 candidateRelationshipId
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}，用 extract_json 捕获 {"candidateRelationshipId": "$.body.binding.candidateRelationshipId"}
     And 调用 GET /api/esm/v1/relationships/fixed-tags，记下第 1 个固定标签
-    When 调用 POST /api/esm/v1/relationships/setting，用标签 "A"，body 传 {"candidateRelationshipId": "<candidateRelationshipId>", "targetUserId": "<标签 B 的 userId>", "setting": {"remarkName": "小雨", "tagText": "<第 1 个固定标签>"}}
+    When 调用 POST /api/esm/v1/relationships/setting，用标签 "A"，body 传 {"candidateRelationshipId": "${candidateRelationshipId}", "targetUserId": "${B_userId}", "setting": {"remarkName": "小雨", "tagText": "<第 1 个固定标签>"}}
     Then statusCode 应该是 "0"
     And body.setting.remarkName 应该是 "小雨"
     And body.setting.tagText 应该等于记下的固定标签
@@ -191,11 +190,11 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-17 自定义标签走同步审核并覆盖旧标签
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}，记下 candidateRelationshipId
-    When 调用 POST /api/esm/v1/relationships/setting，用标签 "A"，body 传 {"candidateRelationshipId": "<candidateRelationshipId>", "targetUserId": "<标签 B 的 userId>", "setting": {"remarkName": "小雨", "tagText": "朋友"}}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}，用 extract_json 捕获 {"candidateRelationshipId": "$.body.binding.candidateRelationshipId"}
+    When 调用 POST /api/esm/v1/relationships/setting，用标签 "A"，body 传 {"candidateRelationshipId": "${candidateRelationshipId}", "targetUserId": "${B_userId}", "setting": {"remarkName": "小雨", "tagText": "朋友"}}
     Then statusCode 应该是 "0"
-    When 调用 POST /api/esm/v1/relationships/setting，用标签 "A"，body 传 {"candidateRelationshipId": "<candidateRelationshipId>", "targetUserId": "<标签 B 的 userId>", "setting": {"remarkName": "小雨", "tagText": "一起吃饭的同事"}}
+    When 调用 POST /api/esm/v1/relationships/setting，用标签 "A"，body 传 {"candidateRelationshipId": "${candidateRelationshipId}", "targetUserId": "${B_userId}", "setting": {"remarkName": "小雨", "tagText": "一起吃饭的同事"}}
     Then statusCode 应该是 "0"
     And body.setting.tagText 应该是 "一起吃饭的同事"
     And body.setting.tagAuditStatus 应该是 "USER_INFO_AUDIT_STATUS_PASSED"
@@ -204,8 +203,8 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-18 未完成量表的受邀方绑定分享，不进入分享方的候选列表
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，填资料，不做量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
     Then statusCode 应该是 "0"
     And body.binding.status 不应该是 "SHARE_BINDING_STATUS_CANDIDATE_CREATED"
     When 调用 GET /api/esm/v1/relationships/candidates，用标签 "A"
@@ -218,8 +217,8 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-19 候选关系的创建时刻贴合受邀方绑定的那一刻
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
     Then statusCode 应该是 "0"
     And body.candidateRelationship.createdAtMs 与本次响应的 serverTimeMs 的差值不应该超过 2000 毫秒
 
@@ -231,21 +230,21 @@ Feature: ESM V3.0 报告与关系接口
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，填资料，不做量表
     And 用 esm_new_user 建一个标签为 "C" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
-    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "C"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
+    When 调用 POST /api/esm/v1/relationships/share/bind，用标签 "C"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
     Then statusCode 应该是 "0"
-    And body.binding.ownerUserId 应该等于标签 "A" 的 userId
+    And body.binding.ownerUserId 应该等于 ${A_userId}
     And body.binding.status 应该是 "SHARE_BINDING_STATUS_CANDIDATE_CREATED"
     When 调用 GET /api/esm/v1/relationships/candidates，用标签 "A"
-    Then body.groups 第 1 条的 relationships 里应该有 counterpartUser.userId 等于标签 "C" 的 userId 的一条
-    And body.groups 第 1 条的 relationships 里不应该有 counterpartUser.userId 等于标签 "B" 的 userId 的一条
+    Then body.groups 第 1 条的 relationships 里应该有 counterpartUser.userId 等于 ${C_userId} 的一条
+    And body.groups 第 1 条的 relationships 里不应该有 counterpartUser.userId 等于 ${B_userId} 的一条
 
   # 前置约 3 分钟
   Scenario: TC-ESM30-PF-21 只读取报告不产生已读标记
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
-    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，记下 reportId
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "<reportId>"}
+    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，用 extract_json 捕获 {"reportId": "$.reportId"}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "${reportId}"}
     Then statusCode 应该是 "0"
     And body.report.viewed 应该是 false
     When 调用 GET /api/esm/v1/home/state，用标签 "A"
@@ -271,14 +270,13 @@ Feature: ESM V3.0 报告与关系接口
   # REQ-ESM-078-02 需要按这个事实重新核对，这里不写对应断言。
   Scenario: TC-ESM30-PF-23 同一 Tab 下不同子模块的反馈互不覆盖
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
-    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，记下 reportId
-    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "<reportId>", "tabTitle": "爱情", "subtitle": "你要的亲密", "score": "REPORT_CONTENT_FEEDBACK_SCORE_LIKE"}
+    And 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，用 extract_json 捕获 {"reportId": "$.reportId"}
+    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "${reportId}", "tabTitle": "爱情", "subtitle": "你要的亲密", "score": "REPORT_CONTENT_FEEDBACK_SCORE_LIKE"}，用 extract_json 捕获 {"feedbackId": "$.body.feedback.feedbackId"}
     Then statusCode 应该是 "0"
-    And 记下 body.feedback.feedbackId 为第一条反馈
-    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "<reportId>", "tabTitle": "爱情", "subtitle": "你要的边界", "score": "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE"}
+    When 调用 POST /api/esm/v1/report/content/feedback，用标签 "A"，body 传 {"reportId": "${reportId}", "tabTitle": "爱情", "subtitle": "你要的边界", "score": "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE"}
     Then statusCode 应该是 "0"
-    And body.feedback.feedbackId 不应该和记下的第一条反馈相同
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "<reportId>"}
+    And body.feedback.feedbackId 不应该等于 ${feedbackId}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "${reportId}"}
     Then body.report.contentFeedbacks 应该有 2 条
     And body.report.contentFeedbacks 里应该有 subtitle 等于 "你要的亲密" 且 score 等于 "REPORT_CONTENT_FEEDBACK_SCORE_LIKE" 的一条
     And body.report.contentFeedbacks 里应该有 subtitle 等于 "你要的边界" 且 score 等于 "REPORT_CONTENT_FEEDBACK_SCORE_DISLIKE" 的一条
@@ -289,15 +287,15 @@ Feature: ESM V3.0 报告与关系接口
   Scenario: TC-ESM30-PF-24 个人报告正文是 JSON，他人报告正文是 Markdown
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
-    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，记下 shareId
-    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "<shareId>", "launchScene": "home_invite"}
-    When 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，记下 reportId
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}
+    When 用 esm_wait_report 等标签 "A" 的 "personal_detail_v1" 报告，用 extract_json 捕获 {"reportId": "$.reportId"}
     Then found 应该是 true
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "<reportId>"}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "${reportId}"}
     Then statusCode 应该是 "0"
     And body.report.reportContent 应该能被解析成 JSON
-    When 用 esm_wait_report 等标签 "B" 的 "external_v1" 报告，记下 B 的对外报告 reportId
+    When 用 esm_wait_report 等标签 "B" 的 "external_v1" 报告，用 extract_json 捕获 {"bExternalReportId": "$.reportId"}
     Then found 应该是 true
-    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "<记下的 B 的对外报告 reportId>", "subjectUserId": "<标签 B 的 userId>"}
+    When 调用 GET /api/esm/v1/report，用标签 "A"，query 传 {"reportId": "${bExternalReportId}", "subjectUserId": "${B_userId}"}
     Then statusCode 应该是 "0"
     And body.report.reportContent 不应该能被解析成 JSON

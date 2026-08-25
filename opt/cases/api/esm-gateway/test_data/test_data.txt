@@ -20,6 +20,35 @@ target_helper 固定用 api。本套件只用这四个工具：
 不要用 `generic_http_api`，也不要用 open_url、click、get_page_text 这些浏览器工具。
 `generic_http_api` 不会带泳道头、不会补 baseReq、也不会带登录态，用它必然拿不到正确结果。
 
+## 跨步骤取值：用 ${变量}，不要手抄
+
+用例里的 id 一律不要从上一步的返回里"看着抄"到下一步——那些是
+`scale_result_1787579309015_5fc762d981300012` 这种长随机串，抄错一位整条用例就废了，
+而且失败现象和接口本身出错分不清。
+
+产生值的那次调用顺手捕获，后面直接引用：
+
+```
+调用 POST /api/esm/v1/chat/create，...，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
+调用 POST /api/esm/v1/chat/message/send，...，body 传 {"chatId": "${chatId}", ...}
+```
+
+- `extract_json` 是 `esm_call` / `esm_wait_report` / `esm_wait_chat_reply` 的参数，
+  写成 `{"变量名": "JSONPath"}`，路径打到哪匹配不上就直接报错，不会静默留空。
+- `${变量}` 可以出现在 `path` / `body_json` / `query_json` 里，请求发出前替换。
+- **变量名只能用字母数字下划线**，不能带点——框架的占位符正则是
+  `[A-Za-z_][A-Za-z0-9_]*`，写成 `${A.userId}` 匹配不上，会原样发给服务端。
+
+`esm_new_user` 建的用户会自动发布三个变量，不用捕获：
+
+| 变量 | 内容 |
+|---|---|
+| `${A_userId}` | 标签 A 的 userId |
+| `${A_resultId}` | 标签 A 的量表 resultId（做完量表后才有值） |
+| `${A_phone}` | 标签 A 的手机号 |
+
+标签 B、C 同理，把 A 换成对应标签。
+
 ## 判定口径
 
 网关对业务失败也返回 HTTP 200，成败不体现在 HTTP 状态码上。

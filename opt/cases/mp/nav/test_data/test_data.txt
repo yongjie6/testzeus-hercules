@@ -42,20 +42,33 @@ MCP 工具够不到。这种情况先用 mmcp_wxmp_mp_webview_url 读出真实 U
 
 5. 断言基于 mmcp_wxmp_mp_snapshot 的输出判断文案是否存在。
 
+## 前置数据：先 mp_use_fixture，再 mp_login_as
+
+用例的 Given 长这样：
+
+```
+Given 以 logged-in 状态进入小程序，后端数据用 state-candidate-1, state-counterpart-report-ready
+```
+
+执行顺序是**先数据后登录**，两步：
+
+1. `mmcp_wxmp_mp_use_fixture`，把「后端数据用」后面那些名字按顺序传给 `scenes`（收数组）
+2. `mmcp_wxmp_mp_login_as`，种登录态
+
+顺序不能反。登录态是照着当前后端数据种的，先登录再换数据，种进去的用户和数据对不上。
+
+Given 里没有「后端数据用」的，用默认 `base`，不要调 `mp_use_fixture`。
+
+片段可以叠加，后面的覆盖前面的同名字段。完整清单见
+`mcp_servers/wxmp/fixtures/README.md`。
+
+## 标了 ⛔ 的用例现在不要跑
+
+用例上方带 `# ⛔ 当前不可执行` 注释的，是已经确认当前环境或实现下跑不出结果的
+（微信原生弹窗点不到、前端功能没实现、mock 网关造不出那种时序）。注释里写了具体原因。
+遇到这种直接跳过并如实报告原因，不要尝试绕过去凑一个通过。
+
 ## 环境说明
 
 后端是 mock 网关，数据来自固定 fixture。已登录用户：昵称 Neo，用户ID user-001。
 
-## v3.0 用例的前置数据
-
-v3.0 用例大量涉及冷启动落点（资料未填 / 未做量表 / 已完成三种分支），是可组合的片段，
-用 `mp_use_fixture` 在 `mp_login_as` **之前**叠加：
-
-- `state-profile-incomplete`：资料未填，落点应该是填写信息页
-- `state-scale-none`：资料填完但未做量表，落点应该是量表页
-- 什么都不叠（`base` 默认）：资料填完且量表已关联，落点应该是新首页
-
-验证落点必须从「启动页」导航进去，不要直接 reLaunch 到目标页——那样绕过了冷启动路由
-判断，落点断言会恒真。
-
-完整片段列表和组合方式见 `mcp_servers/wxmp/fixtures/README.md`。
