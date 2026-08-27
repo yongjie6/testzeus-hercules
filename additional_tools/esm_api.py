@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import difflib
 import json
 import os
 import re
@@ -38,14 +39,22 @@ from testzeus_hercules.utils.logger import logger
 
 DEFAULT_BASE_URL = "https://zmapi-test.daqian369.com"
 DEFAULT_LANE = "feat-esm-v3-0"
-DEFAULT_PRODUCT_ID = "narnia"
+# 小程序自己的产品标识。idl 的 ProductIDESMMiniprogram、四个 esm-* 服务的 defaultProductID、
+# 网关中间件读 x-product-id 的单测，用的都是这个值；dev 仓的 ESM E2E 更是直接拒绝跑在别的
+# 产品下。量表结果的手机号绑定按 (product_id, phone_hash) 建索引，打 narnia 等于在一个真实
+# 小程序永远不会用的命名空间里造数据，测出来的东西不代表线上。
+DEFAULT_PRODUCT_ID = "esm_miniprogram"
 
 TOTAL_QUESTIONS = 144
 AVATAR_REF = "https://daqian-bullet-demo.tos-cn-beijing.volces.com/tests/player_01_19233_selected.jpg"
 
-# 一次 SubmitAnswer 在测试泳道上大约 1 秒，144 题连答接近 3 分钟；答案必须按题号顺序
-# 提交（跳答会被判成题号非法），所以这里没有并发的余地，只能把超时放宽。
-ANSWER_TIMEOUT_SECONDS = 30.0
+# 答案必须按题号顺序提交（跳答会被判成题号非法，proto 里也没有批量提交的 RPC），
+# 所以 144 题只能连答，没有并发的余地。
+#
+# 超时按实测定：432 次 SubmitAnswer 的 max 是 2.63 秒、p95 1.76 秒，超过 5 秒的零次。
+# 原先的 30 秒有 11 倍余量，唯一的作用是把一次真正的挂起拖到 30 秒才报错。10 秒对
+# 实测最大值仍有近 4 倍余量。
+ANSWER_TIMEOUT_SECONDS = 10.0
 REQUEST_TIMEOUT_SECONDS = 60.0
 
 # 政治安全接的是外部审核系统，会稳定命中的语料只能由安全/风控团队提供、且不该进 git——
@@ -56,8 +65,110 @@ _RISK_SAMPLE_ENV = {
     "political_output": "ESM_RISK_SAMPLE_POLITICAL_OUTPUT",
 }
 
-# label -> {"user_id": str, "token": str, "phone": str, "result_id": str}
+# 关系类工作流现在会拿到双方的年龄和性别（idl EsmChatTurnV1Input 的 my_/peer_age_years、
+# my_/peer_gender，EsmRelationBriefV1Input 的 owner_/target_*，EsmReportBundleV1Input.age_years）。
+# 所有标签共用一套人口学属性的话，「对方的年龄性别有没有正确传进去、有没有和自己的搞反」
+# 这类问题在用例里永远看不出来——两边一样，传错了结果也一样。所以按标签给不同的默认值。
+# 标签 A 保持原来的取值，已有用例的行为不变。
+_LABEL_DEMOGRAPHICS: Dict[str, Tuple[str, str]] = {
+    "A": ("GENDER_FEMALE", "1995-05-05"),
+    "B": ("GENDER_MALE", "1988-11-20"),
+    "C": ("GENDER_FEMALE", "2001-03-08"),
+}
+_FALLBACK_DEMOGRAPHICS = ("GENDER_MALE", "1992-07-16")
+
+# label -> {"user_id": str, "token": str, "phone": str, "result_id": str,
+#           "gender": str, "birth_date": str}
 _SESSIONS: Dict[str, Dict[str, str]] = {}
+
+# 每次请求新建 AsyncClient 等于每题重做一次 TCP+TLS 握手。实测：一套量表 144 题，
+# 每次新建连接 168 秒，复用同一个连接 60 秒——那 108 秒全是握手，服务端真实处理只有
+# 0.39 秒/题。全量跑要做 59 次量表，这一项就是 1.77 小时。
+#
+# 按事件循环缓存：httpx 的连接池绑定创建它的 loop，Hercules 一个 scenario 一个 loop，
+# 跨 loop 复用会在第二个 scenario 里炸。key 用 id(loop) 而不是 loop 本身，避免持着
+# 已经关掉的 loop 不放。
+_CLIENTS: Dict[int, httpx.AsyncClient] = {}
+
+# idl/esm/v1/esm_gateway.proto 里 google.api.http 声明的全部 37 条路径。
+#
+# 存在的理由：模型偶尔会把路径写短一截（把 /answering/answer 写成 /answer），网关回
+# 404，报告里就出现一条「服务端 Not Found」——一条本该指向用例的红被伪装成了服务端故障，
+# 而这是最费时间去伪的一类误报。打不中就当场报错，比把 404 带回去强。
+#
+# 新增网关接口时这份名单要跟着 proto 一起更新，否则新接口的用例会被这里拦下。
+_GATEWAY_PATHS = frozenset(
+    {
+        "/api/esm/v1/answering/answer",
+        "/api/esm/v1/answering/restart",
+        "/api/esm/v1/answering/start-or-resume",
+        "/api/esm/v1/auth/logout",
+        "/api/esm/v1/auth/token/refresh",
+        "/api/esm/v1/auth/wechat-phone/login",
+        "/api/esm/v1/auth/wechat/login",
+        "/api/esm/v1/chat/create",
+        "/api/esm/v1/chat/delete",
+        "/api/esm/v1/chat/detail",
+        "/api/esm/v1/chat/generation/stop",
+        "/api/esm/v1/chat/message/edit-resend",
+        "/api/esm/v1/chat/message/feedback",
+        "/api/esm/v1/chat/message/regenerate",
+        "/api/esm/v1/chat/message/send",
+        "/api/esm/v1/chat/messages-after-seq",
+        "/api/esm/v1/chat/recommended-question-card",
+        "/api/esm/v1/chat/recommended-question/use",
+        "/api/esm/v1/chat/rename",
+        "/api/esm/v1/chats",
+        "/api/esm/v1/home/state",
+        "/api/esm/v1/relationship-chat/start",
+        "/api/esm/v1/relationships/candidates",
+        "/api/esm/v1/relationships/conversations",
+        "/api/esm/v1/relationships/fixed-tags",
+        "/api/esm/v1/relationships/setting",
+        "/api/esm/v1/relationships/share/bind",
+        "/api/esm/v1/relationships/share/create",
+        "/api/esm/v1/relationships/type-options",
+        "/api/esm/v1/report",
+        "/api/esm/v1/report/content/feedback",
+        "/api/esm/v1/report/viewed",
+        "/api/esm/v1/result/latest",
+        "/api/esm/v1/runtime/state",
+        "/api/esm/v1/user/info",
+        "/api/esm/v1/user/me",
+        "/api/esm/v1/user/unregister",
+    }
+)
+
+
+def _check_gateway_path(path: str) -> None:
+    """路径不在契约里就直接抛，并给出最接近的那条。
+
+    提示的排序不能只靠 difflib：典型的错法是把路径写短一截（/answering/answer 写成
+    /answer），而 difflib 按整体相似度算，短字符串会把 /user/me 这种无关路径排到正确答案
+    前面。所以先挑「把写错的那条当子串包含进去」的候选，再拿 difflib 兜底。
+    """
+    clean = (path or "").split("?", 1)[0].rstrip("/") or "/"
+    if clean in _GATEWAY_PATHS:
+        return
+    tail = clean.rsplit("/", 1)[-1]
+    contains = sorted(p for p in _GATEWAY_PATHS if tail and (f"/{tail}" in p or p.startswith(clean)))
+    fuzzy = [p for p in difflib.get_close_matches(clean, sorted(_GATEWAY_PATHS), n=3, cutoff=0.5) if p not in contains]
+    close = (contains + fuzzy)[:3]
+    hint = "\n最接近的是：\n  " + "\n  ".join(close) if close else ""
+    raise ValueError(f"{clean!r} 不是 esm_gateway.proto 里声明的网关路径。照用例里写的路径原样调用，不要自己拼。{hint}")
+
+
+def _client() -> httpx.AsyncClient:
+    loop = asyncio.get_running_loop()
+    key = id(loop)
+    client = _CLIENTS.get(key)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=120.0),
+        )
+        _CLIENTS[key] = client
+    return client
 
 
 def _base_url() -> str:
@@ -120,6 +231,8 @@ def _publish_session_vars() -> None:
         store[f"{safe}_userId"] = session.get("user_id", "")
         store[f"{safe}_resultId"] = session.get("result_id", "")
         store[f"{safe}_phone"] = session.get("phone", "")
+        store[f"{safe}_gender"] = session.get("gender", "")
+        store[f"{safe}_birthDate"] = session.get("birth_date", "")
 
 
 def _capture(summary: Dict[str, Any], extract_json: Any) -> Dict[str, str]:
@@ -141,6 +254,38 @@ def _capture(summary: Dict[str, Any], extract_json: Any) -> Dict[str, str]:
         store[name] = matches[0]
         captured[name] = matches[0]
     return captured
+
+
+async def _assert_inline(summary: Dict[str, Any], assert_json: Any) -> list:
+    """在产生响应的这一次调用里就地断言，不要求把响应再当参数传回来。
+
+    `assert_json_path` 需要调用方把整份响应 JSON 当字符串参数重新提交一遍。144 题的
+    start-or-resume 响应传不进去，模型只能"看着说符合"，然后诚实地把用例判成失败
+    （TC-ESM30-AS-01 就是这么红的）。响应本来就在这个函数手里，让它自己断言即可。
+
+    写法 `{"<JSONPath>": "<operator>:<expected>"}`，例如
+    `{"$.body.questions": "count_eq:144", "$.statusCode": "eq:0"}`。
+    只写运算符（`{"$.body.session": "exists"}`）表示不需要期望值；
+    整条不带运算符前缀时按 eq 处理。
+
+    断言实现直接复用 assert_json_path，避免同一套判定在两个地方各写一遍、然后慢慢跑偏。
+    """
+    spec = _parse_json_arg(assert_json, "assert_json")
+    if not spec:
+        return []
+
+    from testzeus_hercules.core.tools.api_assertions import assert_json_path
+
+    payload = json.dumps(summary, ensure_ascii=False)
+    results = []
+    for path, raw in spec.items():
+        text = str(raw)
+        operator, _, expected = text.partition(":")
+        if operator not in ("eq", "ne", "contains", "exists", "not_exists", "gt", "lt", "count_eq", "eq_path"):
+            operator, expected = "eq", text
+        outcome = json.loads(await assert_json_path(response_json=payload, path=path, operator=operator, expected=expected))
+        results.append(outcome)
+    return results
 
 
 def _parse_json_arg(raw: Any, field: str) -> Dict[str, Any]:
@@ -217,6 +362,7 @@ async def _send(
     """发一次网关请求，并把 baseReq 补全。"""
     method = method.upper()
     base_req = {"productId": _product_id(), "requestId": _request_id(request_id_prefix)}
+    _check_gateway_path(path)
     url = f"{_base_url()}{path}"
 
     request_query: Dict[str, str] = {}
@@ -234,14 +380,14 @@ async def _send(
         json_body["baseReq"] = {**base_req, **existing} if isinstance(existing, dict) else base_req
         request_query = _flatten_query(query or {})
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.request(
-            method,
-            url,
-            headers=_headers(token),
-            params=request_query or None,
-            json=json_body,
-        )
+    response = await _client().request(
+        method,
+        url,
+        headers=_headers(token),
+        params=request_query or None,
+        json=json_body,
+        timeout=timeout,
+    )
 
     summary = _summarize(response)
     file_logger(
@@ -270,16 +416,15 @@ async def _register_user(nickname: str, phone_prefix: str = "139") -> Tuple[str,
     同一套 token，ESM 网关只解析 token 里的 uid，所以对网关侧契约是等价的。
     """
     phone = f"{phone_prefix}{str(time.time_ns())[-8:]}"
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-        response = await client.post(
-            f"{_base_url()}/api/auth/register-by-phone",
-            headers=_headers(None),
-            json={
-                "phone": phone,
-                "nickname": nickname,
-                "baseReq": {"productId": _product_id(), "requestId": _request_id("esm-register")},
-            },
-        )
+    response = await _client().post(
+        f"{_base_url()}/api/auth/register-by-phone",
+        headers=_headers(None),
+        json={
+            "phone": phone,
+            "nickname": nickname,
+            "baseReq": {"productId": _product_id(), "requestId": _request_id("esm-register")},
+        },
+    )
     payload = response.json()
     status_code = (payload.get("baseResp") or {}).get("statusCode")
     if status_code != "0":
@@ -336,7 +481,11 @@ async def _complete_assessment(token: str) -> Tuple[str, int]:
         "  - with_scale_result=true: assessment finished, entry stage HOME_ENTRY_STAGE_HOME.\n"
         "Answering all 144 questions takes roughly three minutes, so only pass with_scale_result=true when "
         "the scenario genuinely needs a scale result (relationship share, candidate relationship, report or "
-        "relationship chat). Calling this again with the same label replaces that label with a new user."
+        "relationship chat). Calling this again with the same label replaces that label with a new user.\n"
+        "Gender and birth date default per label (A, B and C each get a different pair) so that a "
+        "relationship scenario has two genuinely different people on the two sides -- the chat and report "
+        "workflows receive both sides' age and gender, and identical fixtures would hide a swapped or "
+        "dropped value. Pass gender/birth_date explicitly only when the scenario asserts a specific value."
     ),
 )
 async def esm_new_user(
@@ -344,10 +493,16 @@ async def esm_new_user(
     nickname: Annotated[str, "Nickname submitted through UpdateUserInfo. Use plain text that passes content moderation."] = "接口用例用户",
     with_profile: Annotated[bool, "True submits the required profile through UpdateUserInfo. False leaves the account at the raw registered state, before profile completion."] = True,
     with_scale_result: Annotated[bool, "True answers all 144 assessment questions so the user owns a scale result. Takes about three minutes. Implies with_profile."] = False,
-) -> Annotated[str, "Minified JSON: label, userId, phone, userInfoCompleted, resultId, elapsedSeconds."]:
+    gender: Annotated[str, "Gender enum submitted through UpdateUserInfo, for example GENDER_MALE. Leave empty to use this label's default, which differs per label on purpose."] = "",
+    birth_date: Annotated[str, "Birth date submitted through UpdateUserInfo, YYYY-MM-DD. Leave empty to use this label's default, which differs per label on purpose."] = "",
+) -> Annotated[str, "Minified JSON: label, userId, phone, gender, birthDate, userInfoCompleted, resultId, elapsedSeconds."]:
     label = (label or "").strip()
     if not label:
         raise ValueError("label 不能为空")
+
+    default_gender, default_birth_date = _LABEL_DEMOGRAPHICS.get(label.upper(), _FALLBACK_DEMOGRAPHICS)
+    gender = (gender or "").strip() or default_gender
+    birth_date = (birth_date or "").strip() or default_birth_date
 
     started = time.time()
     user_id, token, phone = await _register_user(nickname)
@@ -361,8 +516,8 @@ async def esm_new_user(
             body={
                 "userInfo": {
                     "nickname": nickname,
-                    "gender": "GENDER_FEMALE",
-                    "birthDate": "1995-05-05",
+                    "gender": gender,
+                    "birthDate": birth_date,
                     "avatarRef": AVATAR_REF,
                     "avatarSource": "AVATAR_SOURCE_WECHAT",
                 }
@@ -377,13 +532,22 @@ async def esm_new_user(
     if with_scale_result:
         result_id, _ = await _complete_assessment(token)
 
-    _SESSIONS[label] = {"user_id": user_id, "token": token, "phone": phone, "result_id": result_id}
+    _SESSIONS[label] = {
+        "user_id": user_id,
+        "token": token,
+        "phone": phone,
+        "result_id": result_id,
+        "gender": gender if user_info_completed else "",
+        "birth_date": birth_date if user_info_completed else "",
+    }
     logger.info("esm_new_user label=%s user_id=%s with_scale_result=%s", label, user_id, with_scale_result)
     return json.dumps(
         {
             "label": label,
             "userId": user_id,
             "phone": phone,
+            "gender": gender if user_info_completed else "",
+            "birthDate": birth_date if user_info_completed else "",
             "userInfoCompleted": user_info_completed,
             "resultId": result_id,
             "elapsedSeconds": round(time.time() - started, 1),
@@ -444,10 +608,7 @@ async def esm_risk_sample(
         raise ValueError(f"未知的 kind {kind!r}；可选: {sorted(_RISK_SAMPLE_ENV)}")
     sample = os.getenv(env_name, "").strip()
     if not sample:
-        raise RuntimeError(
-            f"{env_name} 未设置。这条用例需要外部审核系统真会命中的样例语料，不能写死在仓库里——"
-            "找风控/安全团队要一条当前配置下确实会命中的样例，跑之前通过这个环境变量注入。"
-        )
+        raise RuntimeError(f"{env_name} 未设置。这条用例需要外部审核系统真会命中的样例语料，不能写死在仓库里——找风控/安全团队要一条当前配置下确实会命中的样例，跑之前通过这个环境变量注入。")
     result = {"kind": kind, "content": sample}
     captured = _capture(result, extract_json)
     if captured:
@@ -481,6 +642,14 @@ async def esm_risk_sample(
         "Every user created by esm_new_user also publishes ${LABEL_userId}, ${LABEL_resultId} and "
         "${LABEL_phone} automatically -- for label A that is ${A_userId} / ${A_resultId}, usable with no "
         "capture step at all. Note the underscore: variable names cannot contain a dot.\n"
+        "assert_json makes the assertions right here, inside the call that produced the response, so a "
+        "large payload never has to be handed back to a separate assertion tool. Write it as "
+        '{"<JSONPath>": "<operator>:<expected>"} -- for example {"$.body.questions": "count_eq:144", '
+        '"$.statusCode": "eq:0", "$.body.session": "exists"}. Operators are the assert_json_path ones '
+        "(eq, ne, contains, exists, not_exists, gt, lt, count_eq, eq_path); count_eq counts the elements "
+        "of the array the path lands on. Each entry comes back under assertions with PASSED/FAILED and the "
+        "actual value. PREFER THIS over re-passing the response to assert_json_path -- for a response with "
+        "144 questions, re-passing it is not possible at all.\n"
         "The returned JSON has httpStatus, statusCode, success, bizCodeName, canonicalCode, statusMsg, "
         "serverTimeMs, body, and captured when extract_json was used. The gateway answers HTTP 200 even for "
         'business failures, so judge success by statusCode == "0" and judge a specific failure by '
@@ -496,7 +665,8 @@ async def esm_call(
     body_json: Annotated[str, "JSON object string for the POST body, in proto JSON lowerCamelCase. May contain ${name}. Leave empty for GET."] = "",
     query_json: Annotated[str, "JSON object string for GET query parameters, in proto JSON lowerCamelCase. May contain ${name}. Leave empty for POST."] = "",
     extract_json: Annotated[str, 'JSON object string mapping variable name to JSONPath into this response, e.g. {"chatId": "$.body.chat.chatId"}.'] = "",
-) -> Annotated[str, "Minified JSON: httpStatus, statusCode, success, bizCodeName, canonicalCode, statusMsg, serverTimeMs, body, captured."]:
+    assert_json: Annotated[str, 'JSON object string mapping JSONPath to "operator:expected", e.g. {"$.body.questions": "count_eq:144", "$.statusCode": "eq:0"}.'] = "",
+) -> Annotated[str, "Minified JSON: httpStatus, statusCode, success, bizCodeName, canonicalCode, statusMsg, serverTimeMs, body, captured, assertions."]:
     session = _session(label)
     _publish_session_vars()
     summary = await _send(
@@ -510,6 +680,12 @@ async def esm_call(
     captured = _capture(summary, extract_json)
     if captured:
         summary = {**summary, "captured": captured}
+        # 跨步骤的 id 是后续断言的比较基准。不记下来的话，一条用例里"第二次返回的
+        # sessionId 等于第一次捕获的"到底比的是什么值，事后无从查证。
+        file_logger(json.dumps({"esm_capture": {"path": path, "captured": captured}}, ensure_ascii=False))
+    assertions = await _assert_inline(summary, assert_json)
+    if assertions:
+        summary = {**summary, "assertions": assertions}
     return json.dumps(summary, ensure_ascii=False)
 
 
@@ -529,7 +705,11 @@ async def esm_call(
 async def esm_wait_report(
     label: Annotated[str, "User label whose report is being waited for. The report subject is this same user."],
     report_type: Annotated[str, "Report type string written by the Agent, for example personal_detail_v1."] = "personal_detail_v1",
-    timeout_seconds: Annotated[float, "How long to keep polling before giving up."] = 180.0,
+    # 2026-08-26 实测：一轮跑里 13 次等待，常态 85–120 秒，只有一次越过 180 秒撞上原来的超时。
+    # 也就是说 180 秒对一个典型 100 秒的操作只有 1.8 倍余量，长尾必然漏出来变成假红。
+    # 调到 300 秒是补余量，不是掩盖退化——分布集中在 120 秒以内，真退化会表现为整体右移，
+    # 而不是单点越界；那种情况该登记缺陷，不该再调这个数。
+    timeout_seconds: Annotated[float, "How long to keep polling before giving up."] = 300.0,
     extract_json: Annotated[str, 'JSON object string mapping variable name to JSONPath into this result, e.g. {"reportId": "$.reportId"}.'] = "",
 ) -> Annotated[str, "Minified JSON: reportId, status, reportType, reportVersion, contentLength, viewed, waitedSeconds, captured. found=false when it never became ready."]:
     session = _session(label)
