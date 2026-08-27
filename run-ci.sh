@@ -63,7 +63,7 @@ if [ "$TYPE" = "api" ]; then
   fi
   export ESM_BASE_URL="${ESM_BASE_URL:-https://zmapi-test.daqian369.com}"
   export ESM_LANE="$E2E_LANE"
-  export ESM_PRODUCT_ID="${ESM_PRODUCT_ID:-narnia}"
+  export ESM_PRODUCT_ID="${ESM_PRODUCT_ID:-esm_miniprogram}"
   # esm_call 这些工具住在 additional_tools/，靠这个变量被 BaseNavAgent.load_tools 加载。
   # 不设它 api_nav_agent 只有 generic_http_api，用例会全线失败。
   export ADDITIONAL_TOOL_DIRS="${ADDITIONAL_TOOL_DIRS:-$(pwd)/additional_tools}"
