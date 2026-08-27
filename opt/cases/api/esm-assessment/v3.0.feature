@@ -130,7 +130,7 @@ Feature: ESM V3.0 答题与量表结果接口
     And bizCodeName 应该是 "BIZ_ESM_ASSESSMENT_SCALE_RESULT_NOT_FOUND"
     And canonicalCode 应该是 "CANONICAL_ERROR_CODE_NOT_FOUND"
 
-  # 这条要跑完 144 题，单条大约 3 分钟。
+  # 这条要跑完 144 题，约 1 分钟。
   Scenario: TC-ESM30-AS-14 答满 144 题后生成量表结果且分数与解释按维度对齐
     Given 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
     When 调用 GET /api/esm/v1/result/latest，用标签 "B"

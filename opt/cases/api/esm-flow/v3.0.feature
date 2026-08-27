@@ -3,7 +3,7 @@ Feature: ESM V3.0 场景化串联：从进入小程序到关系对话
   # 来源：openspec/changes/add-esm-v21-backend/frontend_api_flow.md 总流程时序图
   # 契约：idl/esm/v1/*.proto、idl/error_code_esm.go
   # 这些用例按真实调用顺序串接口，验证跨服务的状态推进。单接口边界见另外四个套件。
-  # 每条都要现做量表：单人链路约 4 分钟，双人链路约 7 分钟。
+  # 除断点续答和重新开始外都要现做量表：一份量表约 1 分钟，等第一份报告另计约 2 分钟。
 
   Scenario: TC-ESM30-FL-01 新用户主链路：登录到资料到答题到结果到报告到对话
     # 对应 frontend_api_flow.md 总流程时序图上半段

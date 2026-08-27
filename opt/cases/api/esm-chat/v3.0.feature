@@ -4,7 +4,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
   # 契约：idl/esm/v1/esm_chat.proto
   # 期望错误码取自 idl/error_code_esm.go，并已在 feat-esm-v3-0 泳道上核对过实际返回。
   # 当前泳道接真实模型，助手回复正文不可预期，断言只看结构、状态和来源。
-  # 标了「前置约 3 分钟」「前置约 6 分钟」的用例要现做量表，跑之前先看清成本。
+  # 每条 Scenario 上方的「前置：…」标了这条要现做多少份量表、要不要等报告，跑之前先看清成本。
 
   Scenario: TC-ESM30-CH-01 会话不存在时读详情、重命名、删除都返回未找到
     Given 用 esm_new_user 建一个标签为 "A" 的用户，填资料，不做量表
@@ -28,7 +28,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_CHAT_CANDIDATE_RELATIONSHIP_NOT_FOUND"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 等报告，约 3 分钟
   Scenario: TC-ESM30-CH-04 从首页入口创建自己的对话并自动绑定报告上下文
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_wait_report 等标签 "A" 的 "personal_dialogue_v1" 报告
@@ -42,7 +42,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And body.chat.reportId 应该非空
     And body.chat.turnStatus 应该是 "CHAT_TURN_STATUS_IDLE"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 1 轮对话，约 1 分钟起
   Scenario: TC-ESM30-CH-05 发送一条问题后拿到落库的助手回复
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -62,7 +62,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And latestSeqId 应该是 "2"
     And turnStatus 应该是 "CHAT_TURN_STATUS_IDLE"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表，约 1 分钟
   Scenario: TC-ESM30-CH-06 同一个 clientRequestId 重发同样内容是幂等的，换内容则冲突
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -74,7 +74,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_CHAT_CLIENT_REQUEST_CONFLICT"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 1 轮对话，约 1 分钟起
   Scenario: TC-ESM30-CH-07 补偿读取按 seq 增量返回落库消息
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -93,7 +93,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then body.messages 应该是空
     And body.latestSeqId 应该是 "2"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 1 轮对话，约 1 分钟起
   Scenario: TC-ESM30-CH-08 助手消息落库后会话标题和最近内容摘要被刷新
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -110,7 +110,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then body.selfChat.chatId 应该等于 ${chatId}
     And body.selfChat.latestChatSummary 应该非空
 
-  # 前置约 3 分钟
+  # 前置：1 份量表，约 1 分钟
   Scenario: TC-ESM30-CH-09 重命名与删除只影响当前用户的会话列表
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -128,7 +128,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then body.chats 的条数应该比记下的少 1
     And body.chats 里不应该有 chatId 等于记下的 chatId 的一条
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 1 轮对话，约 1 分钟起
   Scenario: TC-ESM30-CH-10 助手回复落库后异步产出推荐问题卡片
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -144,7 +144,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And body.card.cardId 应该等于 activeRecommendedQuestionCard 的 cardId
     And body.card.status 应该是 "RECOMMENDED_QUESTION_CARD_STATUS_READY"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 1 轮对话，约 1 分钟起
   Scenario: TC-ESM30-CH-11 使用推荐问题会把卡片标记为已使用并发起下一轮
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
@@ -161,7 +161,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_CHAT_RECOMMENDED_QUESTION_CARD_UNAVAILABLE"
 
-  # 前置约 6 分钟
+  # 前置：2 份量表 + 1 轮对话，约 2 分钟起
   Scenario: TC-ESM30-CH-12 首次进入关系对话占席位并推送两条初始化消息
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
@@ -187,7 +187,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And messages 第 2 条的 role 应该是 "CHAT_MESSAGE_ROLE_ASSISTANT"
     And messages 第 2 条的 contentLength 应该大于 messages 第 1 条的 contentLength
 
-  # 前置约 6 分钟
+  # 前置：2 份量表，约 2 分钟
   Scenario: TC-ESM30-CH-13 提交关系选择卡片后关系输入状态被落库
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
@@ -205,7 +205,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And body.relationship.relationshipInput.level1Title 应该非空
     And body.relationship.relationshipInput.level2Title 应该非空
 
-  # 前置约 6 分钟
+  # 前置：2 份量表，约 2 分钟
   Scenario: TC-ESM30-CH-14 非法关系类型选项被拒
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
@@ -216,7 +216,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_CHAT_RELATIONSHIP_TYPE_INVALID"
 
-  # 前置约 6 分钟
+  # 前置：2 份量表，约 2 分钟
   Scenario: TC-ESM30-CH-15 重复进入同一关系对话不重复占席位
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
@@ -232,7 +232,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then body.relationshipSlotQuota.usedCount 应该是 1
     And body.conversationRelationships 应该有 1 条
 
-  # 前置约 9 分钟
+  # 前置：3 份量表，约 3 分钟
   Scenario: TC-ESM30-CH-16 不是关系成员的人进不了这段关系对话
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
@@ -243,7 +243,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     Then statusCode 不应该是 "0"
     And bizCodeName 应该是 "BIZ_ESM_CHAT_RELATIONSHIP_MEMBER_MISMATCH"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 等报告 + 1 轮对话，约 3 分钟起
   # 心理安全仅用 prompt 处理，不接外部审核系统——这条不需要 esm_risk_sample，PRD 里给出的
   # 样例语料本身就是安全的、可以直接写进用例。
   Scenario: TC-ESM30-CH-17 心理安全强倾向语料收到带两条热线的兜底回复，且不被输出审核拦截
@@ -265,7 +265,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And body.messages 第 2 条的 content 应该包含 "全国心理危机干预热线"
     And body.messages 第 2 条的 content 应该包含 "全国心理援助热线"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 等报告，约 3 分钟
   # 命中语料由风控/安全团队提供，通过 ESM_RISK_SAMPLE_POLITICAL_INPUT 注入，不写进本文件。
   # 未设置该变量时 esm_risk_sample 会直接报错说明原因，不会静默跳过或用占位内容代替。
   Scenario: TC-ESM30-CH-18 政治安全输入侧命中：提问保留在会话中并返回固定兜底话术
@@ -286,7 +286,7 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And body.messages 第 2 条的 role 应该是 "CHAT_MESSAGE_ROLE_ASSISTANT"
     And body.messages 第 2 条的 content 应该是 "这个问题我无法回答，你可以尝试询问其他话题，我会努力理解你的需求并尽力提供帮助。"
 
-  # 前置约 3 分钟
+  # 前置：1 份量表 + 等报告 + 1 轮对话，约 3 分钟起
   # 命中语料由风控/安全团队提供，通过 ESM_RISK_SAMPLE_POLITICAL_OUTPUT 注入，不写进本文件。
   # 这条要能诱导模型先输出违规内容、再被第二道审核拦下撤回——比输入侧命中更挑，样例要单独维护。
   Scenario: TC-ESM30-CH-19 政治安全输出侧命中：撤回已流式输出的内容并落库为固定兜底话术
@@ -305,3 +305,77 @@ Feature: ESM V3.0 对话接口：自己的对话与关系对话
     And body.messages 应该有 2 条
     And body.messages 第 2 条的 role 应该是 "CHAT_MESSAGE_ROLE_ASSISTANT"
     And body.messages 第 2 条的 content 应该是 "这个问题我无法回答，你可以尝试询问其他话题，我会努力理解你的需求并尽力提供帮助。"
+
+  # 前置：2 份量表，约 2 分钟
+  # 契约把 create_new_chat 改成了 optional，注释写明：进候选关系对话时省略这个字段，
+  # 省略或 false 都是「进入或恢复最近一段关系对话」，true 才是用户显式新开一段。
+  # 前端走的是省略那条路径，TC-ESM30-CH-15 测的是显式 false，这条补上省略。
+  Scenario: TC-ESM30-CH-20 省略 createNewChat 进关系对话，再进一次恢复的是同一段
+    Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
+    And 用 esm_new_user 建一个标签为 "B" 的用户，做完量表
+    And 调用 POST /api/esm/v1/relationships/share/create，用标签 "A"，body 传 {"launchScene": "home_invite"}，用 extract_json 捕获 {"shareId": "$.body.share.shareId"}
+    And 调用 POST /api/esm/v1/relationships/share/bind，用标签 "B"，body 传 {"shareId": "${shareId}", "launchScene": "home_invite"}，用 extract_json 捕获 {"candidateRelationshipId": "$.body.binding.candidateRelationshipId"}
+    When 调用 POST /api/esm/v1/relationship-chat/start，用标签 "A"，body 传 {"candidateRelationshipId": "${candidateRelationshipId}", "targetUserId": "${B_userId}"}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId", "conversationRelationshipId": "$.body.relationship.conversationRelationshipId"}
+    Then statusCode 应该是 "0"
+    And body.slotOccupied 应该是 true
+    And body.slotQuota.usedCount 应该是 1
+    And body.chat.chatKind 应该是 "CHAT_KIND_RELATIONSHIP"
+    And body.chat.sourceType 应该是 "CHAT_SOURCE_TYPE_RELATIONSHIP_ENTRY"
+    When 再次调用 POST /api/esm/v1/relationship-chat/start，用标签 "A"，body 传 {"candidateRelationshipId": "${candidateRelationshipId}", "targetUserId": "${B_userId}"}
+    Then statusCode 应该是 "0"
+    And body.chat.chatId 应该等于 ${chatId}
+    And body.relationship.conversationRelationshipId 应该等于 ${conversationRelationshipId}
+    And body.slotQuota.usedCount 应该是 1
+    And body.slotQuota.remainingCount 应该是 19
+
+  # 前置：1 份量表 + 2 轮对话，约 1 分钟起
+  # 编辑重发是重开一条分支：原来的用户消息和它的助手回复都退出当前分支，
+  # 补偿读取和会话详情都只应该看到改过的那一轮。
+  Scenario: TC-ESM30-CH-21 编辑重发后当前分支只剩改过的那一轮
+    Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
+    And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
+    And 调用 POST /api/esm/v1/chat/message/send，用标签 "A"，body 传 {"chatId": "${chatId}", "content": "我在压力下最容易先放弃什么？", "inputType": "CHAT_INPUT_TYPE_TEXT", "clientRequestId": "case-ch21-send-1"}，用 extract_json 捕获 {"userMessageId": "$.body.userMessage.messageId"}
+    And 用 esm_wait_chat_reply 等标签 "A" 在 "${chatId}" 上 afterSeqId "0" 的回复，用 extract_json 捕获 {"assistantMessageId": "$.messages[1].messageId"}
+    When 调用 POST /api/esm/v1/chat/message/edit-resend，用标签 "A"，body 传 {"chatId": "${chatId}", "messageId": "${userMessageId}", "content": "换个问法：请更简短地说明刚才那个结论。", "clientRequestId": "case-ch21-edit-1"}
+    Then statusCode 应该是 "0"
+    And body.userMessage.content 应该是 "换个问法：请更简短地说明刚才那个结论。"
+    And body.userMessage.messageId 不应该等于 ${userMessageId}
+    When 用 esm_wait_chat_reply 等标签 "A" 在 "${chatId}" 上 afterSeqId "0" 的回复
+    Then settled 应该是 true
+    And turnStatus 应该是 "CHAT_TURN_STATUS_IDLE"
+    When 调用 GET /api/esm/v1/chat/messages-after-seq，用标签 "A"，query 传 {"chatId": "${chatId}", "afterSeqId": "0"}
+    Then statusCode 应该是 "0"
+    And body.messages 应该有 2 条
+    And body.messages 第 1 条的 role 应该是 "CHAT_MESSAGE_ROLE_USER"
+    And body.messages 第 1 条的 content 应该是 "换个问法：请更简短地说明刚才那个结论。"
+    And body.messages 第 2 条的 role 应该是 "CHAT_MESSAGE_ROLE_ASSISTANT"
+    And body.messages 里没有一条的 messageId 等于 ${userMessageId}
+    And body.messages 里没有一条的 messageId 等于 ${assistantMessageId}
+    When 调用 GET /api/esm/v1/chat/detail，用标签 "A"，query 传 {"chatId": "${chatId}"}
+    Then statusCode 应该是 "0"
+    And body.messages 应该有 2 条
+    And body.chat.turnStatus 应该是 "CHAT_TURN_STATUS_IDLE"
+
+  # 前置：1 份量表 + 2 轮对话，约 1 分钟起
+  # 重新生成只换助手那一条：用户消息留在当前分支，旧的助手回复退出。
+  Scenario: TC-ESM30-CH-22 重新生成换掉助手回复，用户消息不动
+    Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
+    And 调用 POST /api/esm/v1/chat/create，用标签 "A"，body 传 {"chatKind": "CHAT_KIND_SELF", "sourceType": "CHAT_SOURCE_TYPE_HOME_SELF_ENTRY", "resultId": "${A_resultId}", "createNewChat": true}，用 extract_json 捕获 {"chatId": "$.body.chat.chatId"}
+    And 调用 POST /api/esm/v1/chat/message/send，用标签 "A"，body 传 {"chatId": "${chatId}", "content": "我更容易被什么样的关系消耗？", "inputType": "CHAT_INPUT_TYPE_TEXT", "clientRequestId": "case-ch22-send-1"}，用 extract_json 捕获 {"userMessageId": "$.body.userMessage.messageId"}
+    And 用 esm_wait_chat_reply 等标签 "A" 在 "${chatId}" 上 afterSeqId "0" 的回复，用 extract_json 捕获 {"assistantMessageId": "$.messages[1].messageId", "assistantSeqId": "$.messages[1].seqId"}
+    When 调用 POST /api/esm/v1/chat/message/regenerate，用标签 "A"，body 传 {"chatId": "${chatId}", "assistantMessageId": "${assistantMessageId}", "clientRequestId": "case-ch22-regen-1"}
+    Then statusCode 应该是 "0"
+    When 用 esm_wait_chat_reply 等标签 "A" 在 "${chatId}" 上 afterSeqId "${assistantSeqId}" 的回复
+    Then settled 应该是 true
+    And turnStatus 应该是 "CHAT_TURN_STATUS_IDLE"
+    # 从旧助手那条的 seq 往后读，只应该有重新生成的这一条；先把条数钉死，
+    # 免得按"助手总在第 2 条"的惯例去取下标越界
+    And messages 应该有 1 条
+    And messages 第 1 条的 role 应该是 "CHAT_MESSAGE_ROLE_ASSISTANT"
+    And messages 第 1 条的 messageId 不应该等于 ${assistantMessageId}
+    When 调用 GET /api/esm/v1/chat/messages-after-seq，用标签 "A"，query 传 {"chatId": "${chatId}", "afterSeqId": "0"}
+    Then statusCode 应该是 "0"
+    And body.messages 应该有 2 条
+    And body.messages 第 1 条的 messageId 应该等于 ${userMessageId}
+    And body.messages 第 2 条的 role 应该是 "CHAT_MESSAGE_ROLE_ASSISTANT"
+    And body.messages 第 2 条的 messageId 不应该等于 ${assistantMessageId}

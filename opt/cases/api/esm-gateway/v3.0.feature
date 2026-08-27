@@ -93,7 +93,7 @@ Feature: ESM V3.0 网关接口：运行时状态、登录态、资料与首页�
     Then bizCodeName 应该是 "BIZ_ESM_GATEWAY_REFRESH_TOKEN_UNAUTHORIZED"
     And statusMsg 应该包含 "invalid"
 
-  # 这条要跑完 144 题，单条大约 3 分钟。
+  # 这条要跑完 144 题，约 1 分钟。
   Scenario: TC-ESM30-GW-12 完成量表后首页聚合出 HOME 阶段与关系席位配额
     Given 用 esm_new_user 建一个标签为 "A" 的用户，做完量表
     When 调用 GET /api/esm/v1/home/state，用标签 "A"

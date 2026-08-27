@@ -8,6 +8,10 @@ export B=https://zmapi-test.daqian369.com
 export L='lane: feat-esm-v3-0'
 ```
 
+下面的复现命令原本是打 `X-Product-ID: narnia` 验的，后来整套用例改用小程序自己的
+`esm_miniprogram`（idl `ProductIDESMMiniprogram`，也是四个 esm-* 服务的默认值），命令
+跟着改了。这几条问题都在响应字段上，和产品标识无关，结论不受影响。
+
 严重度按「是否挡住产品链路」判断。
 
 ---
@@ -36,8 +40,8 @@ myPage.personalReportUnread = false      {已正常返回}
 复现：任取一个做完 144 题的用户，
 
 ```bash
-curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN" \
-  "$B/api/esm/v1/home/state?baseReq.productId=narnia&baseReq.requestId=p1" \
+curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN" \
+  "$B/api/esm/v1/home/state?baseReq.productId=esm_miniprogram&baseReq.requestId=p1" \
   | python3 -c "import sys,json;d=json.load(sys.stdin);print('top latestResult:',(d.get('latestResult') or {}).get('resultId'));print('myPage:',d.get('myPage'))"
 ```
 
@@ -68,8 +72,8 @@ A 看到的 targetUser : {"userId":"54112","nickname":"","avatarRef":""}
 复现：建两个做完量表的用户 A、B，A 建分享、B 绑定，然后
 
 ```bash
-curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN_A" \
-  "$B/api/esm/v1/relationships/candidates?baseReq.productId=narnia&baseReq.requestId=p2" \
+curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN_A" \
+  "$B/api/esm/v1/relationships/candidates?baseReq.productId=esm_miniprogram&baseReq.requestId=p2" \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['groups'][0]['relationships'][0]['counterpartUser'])"
 ```
 
@@ -98,13 +102,13 @@ P0-2 记录 `BindRelationshipShare` 是成功的（只是 `counterpart_user` 是
 ```bash
 export TOKEN_A=...  # 做完量表
 export TOKEN_B=...  # 做完量表
-SHARE_ID=$(curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN_A" \
+SHARE_ID=$(curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN_A" \
   -X POST "$B/api/esm/v1/relationships/share/create" \
-  -d '{"launchScene":"home_invite","baseReq":{"productId":"narnia","requestId":"p3"}}' \
+  -d '{"launchScene":"home_invite","baseReq":{"productId":"esm_miniprogram","requestId":"p3"}}' \
   | python3 -c "import sys,json;print(json.load(sys.stdin)['share']['shareId'])")
-curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN_B" \
+curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN_B" \
   -X POST "$B/api/esm/v1/relationships/share/bind" \
-  -d "{\"shareId\":\"$SHARE_ID\",\"launchScene\":\"home_invite\",\"baseReq\":{\"productId\":\"narnia\",\"requestId\":\"p4\"}}"
+  -d "{\"shareId\":\"$SHARE_ID\",\"launchScene\":\"home_invite\",\"baseReq\":{\"productId\":\"esm_miniprogram\",\"requestId\":\"p4\"}}"
 ```
 
 同一轮复现还发现另一个独立现象，一并记在这里而不是单开一条：完成 144 题后，
@@ -141,9 +145,9 @@ statusMsg   = assessment restart confirmation required
 复现：
 
 ```bash
-curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -X POST "$B/api/esm/v1/answering/restart" \
-  -d '{"previousSessionId":"<进行中的 sessionId>","confirmed":false,"baseReq":{"productId":"narnia","requestId":"p3"}}'
+  -d '{"previousSessionId":"<进行中的 sessionId>","confirmed":false,"baseReq":{"productId":"esm_miniprogram","requestId":"p3"}}'
 ```
 
 对应用例：`TC-ESM30-AS-10`、`TC-ESM30-FL-04`。这两条目前断言的是 `statusMsg` 含
@@ -170,9 +174,9 @@ statusMsg   = relationship share launch path missing: relationship_share.launch_
 复现：
 
 ```bash
-curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -X POST "$B/api/esm/v1/relationships/share/create" \
-  -d '{"launchScene":"not_configured_scene","baseReq":{"productId":"narnia","requestId":"p4"}}'
+  -d '{"launchScene":"not_configured_scene","baseReq":{"productId":"esm_miniprogram","requestId":"p4"}}'
 ```
 
 ---
@@ -205,9 +209,9 @@ curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN" -H '
 复现：
 
 ```bash
-curl -s -H "$L" -H 'X-Product-ID: narnia' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+curl -s -H "$L" -H 'X-Product-ID: esm_miniprogram' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -X POST "$B/api/esm/v1/chat/generation/stop" \
-  -d '{"chatId":"<真实 chatId>","generationId":"generation_does_not_exist","baseReq":{"productId":"narnia","requestId":"p6"}}'
+  -d '{"chatId":"<真实 chatId>","generationId":"generation_does_not_exist","baseReq":{"productId":"esm_miniprogram","requestId":"p6"}}'
 ```
 
 ---

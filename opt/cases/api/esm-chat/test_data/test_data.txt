@@ -34,15 +34,21 @@ target_helper 固定用 api。本套件用 `esm_new_user`、`esm_call`、`esm_wa
 - **变量名只能用字母数字下划线**，不能带点——框架的占位符正则是
   `[A-Za-z_][A-Za-z0-9_]*`，写成 `${A.userId}` 匹配不上，会原样发给服务端。
 
-`esm_new_user` 建的用户会自动发布三个变量，不用捕获：
+`esm_new_user` 建的用户会自动发布这几个变量，不用捕获：
 
 | 变量 | 内容 |
 |---|---|
 | `${A_userId}` | 标签 A 的 userId |
 | `${A_resultId}` | 标签 A 的量表 resultId（做完量表后才有值） |
 | `${A_phone}` | 标签 A 的手机号 |
+| `${A_gender}` | 标签 A 的性别枚举（没填资料的用户是空串） |
+| `${A_birthDate}` | 标签 A 的出生日期（没填资料的用户是空串） |
 
 标签 B、C 同理，把 A 换成对应标签。
+
+**A、B、C 的性别和出生日期默认是不一样的**，这是故意的：对话和报告工作流现在会同时收到
+双方的年龄和性别，两边用同一套属性的话，传错边或者漏传都测不出来。用例需要某个具体取值时
+才给 `esm_new_user` 显式传 `gender` / `birth_date`。
 
 ## 判定口径
 
@@ -91,11 +97,41 @@ target_helper 固定用 api。本套件用 `esm_new_user`、`esm_call`、`esm_wa
 - 推荐问题是旁路卡片，最终助手消息落库后异步生成，通过
   `GetChatDetail.activeRecommendedQuestionCard` 或 `GetRecommendedQuestionCard` 读取。
 - 删除会话只影响当前用户的会话列表可见性。
+- `StartRelationshipChat.createNewChat` 是 optional。**进候选关系对话时省略这个字段**：
+  省略和 false 一样，都是「进入或恢复最近一段关系对话」；true 是用户显式再开一段。
+- 编辑重发和重新生成都是换分支，不是追加：
+  - `EditAndResendChatMessage` 提交一条**新的**用户消息，原来那条用户消息和它的助手回复
+    一起退出当前分支；
+  - `RegenerateChatMessage` 只换助手那一条，用户消息留在分支上，旧的助手回复退出。
+  - 退出分支的消息在 `GetChatDetail` 和 `GetMessagesAfterSeq` 里都读不到——这两个接口
+    返回的是当前分支，不是全部历史。
+- 两个接口的助手回复都可能是异步的（响应里 `assistantMessage` 为空、`turnStatus` 是
+  `CHAT_TURN_STATUS_GENERATING`），断言最终回复一律走 `esm_wait_chat_reply`。
+
+## StopChatGeneration 为什么没有用例
+
+`SendChatMessage` 的 HTTP 请求会一直挂到这一轮结束才返回（响应里直接带最终的
+`assistantMessage`）。`esm_call` 是同步的，等它返回时这一轮已经没有东西可停了，
+所以停止生成没法用现在这套工具写——要覆盖它得先给 `additional_tools/esm_api.py`
+加一个后台发消息的工具，拿到 `generationId` 之后再调停止。缺的断言是：
+`turnStatus` 回到 `CHAT_TURN_STATUS_IDLE`，且被停掉的那一轮不落库助手消息。
 
 ## 前置条件成本
 
-自己的对话需要一个有量表结果的用户（`with_scale_result`，约 3 分钟）。关系对话需要两个
-有量表结果的用户并先建好候选关系（约 6 分钟）。
+单位成本按 2026-08-26 在 feat-esm-v3-0 泳道实测：
+
+| 前置动作 | 耗时 | 说明 |
+|---|---|---|
+| 一份量表（`with_scale_result`） | **约 64 秒** | 注册 + 填资料 + 连答 144 题 |
+| 等第一份报告（`esm_wait_report`） | **约 120 秒** | Agent 侧异步写回，和量表快慢无关 |
+| 同批的其余报告 | **不到 1 秒** | 三种报告一起生成，第一份就绪时其余已经在了 |
+| 一轮对话回复 | 不定 | 真实模型生成，没有可写死的数字 |
+
+每条 Scenario 上方的「前置：…」按这张表算出来。量表那一项曾经是 168 秒，
+`esm_api._send()` 改成复用连接后降到 64 秒——那 104 秒全是每题重建 TCP+TLS 的开销。
+量表耗时再变时改这里的单位成本，各条 Scenario 的标注跟着重算即可。
+
+带「起」字的是下限：那条用例还含对话回复，时长取决于模型。
 
 ## 环境说明
 
