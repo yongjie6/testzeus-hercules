@@ -711,7 +711,7 @@ async def esm_wait_report(
     # 而不是单点越界；那种情况该登记缺陷，不该再调这个数。
     timeout_seconds: Annotated[float, "How long to keep polling before giving up."] = 300.0,
     extract_json: Annotated[str, 'JSON object string mapping variable name to JSONPath into this result, e.g. {"reportId": "$.reportId"}.'] = "",
-) -> Annotated[str, "Minified JSON: reportId, status, reportType, reportVersion, contentLength, viewed, waitedSeconds, captured. found=false when it never became ready."]:
+) -> Annotated[str, "Minified JSON: statusCode, found, reportId, status, reportType, reportVersion, contentLength, viewed, waitedSeconds, captured. found=false when it never became ready."]:
     session = _session(label)
     _publish_session_vars()
     deadline = time.time() + max(timeout_seconds, 1.0)
@@ -729,6 +729,11 @@ async def esm_wait_report(
         report = (last.get("body") or {}).get("report") or {}
         if last.get("statusCode") == "0" and report.get("status") == "REPORT_STATUS_READY":
             result = {
+                # 成功路径也带 statusCode。这两个 wait 工具原先只在失败时返回它，成功时不返回——
+                # 而 esm_call 一直都返回。刚做完五次 esm_call 的调用方会顺手断言 $.statusCode，
+                # 于是在一次本该通过的等待上判失败（TC-ESM30-CH-08 就是这么红的）。
+                # 同一套工具的返回信封要一致，缺一个字段比多一个字段贵得多。
+                "statusCode": "0",
                 "found": True,
                 "reportId": report.get("reportId"),
                 "status": report.get("status"),
@@ -746,6 +751,7 @@ async def esm_wait_report(
 
     return json.dumps(
         {
+            "statusCode": last.get("statusCode"),
             "found": False,
             "reportType": report_type,
             "waitedSeconds": round(time.time() - started, 1),
@@ -774,7 +780,7 @@ async def esm_wait_chat_reply(
     after_seq_id: Annotated[str, 'Highest committed seq_id already seen, as a string. Pass "0" to read the whole chat.'] = "0",
     timeout_seconds: Annotated[float, "How long to keep polling before giving up."] = 120.0,
     extract_json: Annotated[str, 'JSON object string mapping variable name to JSONPath into this result, e.g. {"seq": "$.latestSeqId"}.'] = "",
-) -> Annotated[str, "Minified JSON: settled, latestSeqId, turnStatus, messages (role, seqId, replySource, content preview), waitedSeconds, captured."]:
+) -> Annotated[str, "Minified JSON: statusCode, settled, latestSeqId, turnStatus, messages (role, seqId, replySource, content preview), waitedSeconds, captured."]:
     session = _session(label)
     _publish_session_vars()
     chat_id = str(interpolate_value(chat_id))
@@ -807,6 +813,8 @@ async def esm_wait_chat_reply(
             turn_status = ((detail.get("body") or {}).get("chat") or {}).get("turnStatus")
             if turn_status == "CHAT_TURN_STATUS_IDLE":
                 result = {
+                    # 同上：成功路径也带 statusCode，和 esm_call 的信封保持一致。
+                    "statusCode": "0",
                     "settled": True,
                     "latestSeqId": (last.get("body") or {}).get("latestSeqId"),
                     "turnStatus": turn_status,
@@ -831,6 +839,7 @@ async def esm_wait_chat_reply(
 
     return json.dumps(
         {
+            "statusCode": last.get("statusCode"),
             "settled": False,
             "latestSeqId": (last.get("body") or {}).get("latestSeqId"),
             "waitedSeconds": round(time.time() - started, 1),
