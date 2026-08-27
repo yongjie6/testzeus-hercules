@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import tempfile
 from typing import Any, Dict, List
@@ -78,6 +79,36 @@ class JUnitXMLGenerator:
         except OSError:
             return []
 
+    def _assertion_ledger(self) -> dict:
+        """本 scenario 的断言台账，来自 proofs/assertion_logs.log。
+
+        没有这一项的话，一条绿色用例是不可审计的：报告里看不出它断言了十次全过，
+        还是一次都没断言、由模型自己读着说通过——而后者恰恰是这套用例明令禁止的判定方式。
+        零断言的通过尤其要在报告里显形，否则它和真正验过的通过长得一模一样。
+        """
+        path = os.path.join(str(self.proofs_path), "assertion_logs.log")
+        counts = {"total": 0, "passed": 0, "failed": 0, "error": 0}
+        failures: list[str] = []
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    counts["total"] += 1
+                    outcome = str(record.get("assertion", "")).lower()
+                    if outcome in counts:
+                        counts[outcome] += 1
+                    if outcome in ("failed", "error"):
+                        failures.append(f"{record.get('path')} {record.get('operator')} -> {record.get('actual')!r} (期望 {record.get('expected')!r})")
+        except OSError:
+            return counts | {"failures": failures}
+        return counts | {"failures": failures}
+
     def add_test_case(
         self,
         scenario: str,
@@ -150,6 +181,20 @@ class JUnitXMLGenerator:
         test_props.add_property(Property(name="Network Logs", value=str(self.network_logs_path)))
         test_props.add_property(Property(name="Agents Internal Logs", value=str(self.logs_path)))
         test_props.add_property(Property(name="Planner Thoughts", value=str(self.planner_thoughts_path)))
+
+        ledger = self._assertion_ledger()
+        test_props.add_property(Property(name="Assertions Total", value=str(ledger["total"])))
+        test_props.add_property(Property(name="Assertions Passed", value=str(ledger["passed"])))
+        test_props.add_property(Property(name="Assertions Failed", value=str(ledger["failed"] + ledger["error"])))
+        if ledger["total"] == 0:
+            # 判定是模型读出来的，不是断言工具得出的。它不改变本条的红绿，但报告里必须看得见。
+            test_props.add_property(Property(name="Assertions Missing", value="本条用例没有调用确定性断言工具，结果由模型自述"))
+            opt_list.append("Assertions: 0 — 结果由模型自述，未经确定性断言工具验证")
+        else:
+            opt_list.append(f"Assertions: {ledger['total']} 条，通过 {ledger['passed']}，失败 {ledger['failed'] + ledger['error']}")
+        for detail in ledger["failures"][:5]:
+            opt_list.append(f"Assertion failed: {detail}")
+
         opt_list.append(f"Final Response: {final_response}")
         if evidence_gaps:
             opt_list.append(f"Evidence Missing: {len(evidence_gaps)} capture(s) failed, proofs are incomplete")

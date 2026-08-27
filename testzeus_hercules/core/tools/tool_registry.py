@@ -113,6 +113,20 @@ def api_logger(logging_string: str) -> None:
         file.write(logging_string + "\n")
 
 
+def assertion_logger(logging_string: str) -> None:
+    """把一条断言结果追加到本 scenario 的 proofs/assertion_logs.log。
+
+    通过的断言原先什么都不留：日志只在 FAILED 时写，JUnit 里也没有断言的位置。
+    结果是一条绿色用例完全不可审计——没有任何记录能回答"它到底断言了什么"，
+    连"它一次断言都没做"和"它断言了十次全过"都分不出来。审计只能靠事后翻模型
+    自述的散文，而那正是断言工具存在的意义所要取代的东西。
+    """
+    proof_path = get_global_conf().get_proof_path()
+    assertion_logs_path = os.path.join(proof_path, "assertion_logs.log")
+    with open(assertion_logs_path, "a", encoding="utf-8") as file:
+        file.write(logging_string + "\n")
+
+
 def sec_logger(logging_string: str) -> None:
     """
     Function to log to a file.

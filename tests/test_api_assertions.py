@@ -92,7 +92,7 @@ def test_eq_path_cross_field_comparison():
         expected="$.body.latestResult.resultId",
     )
     assert out["assertion"] == "FAILED"
-    assert out["reason"] == "path matched nothing"
+    assert out["reason"].startswith("path matched nothing")
 
 
 def test_eq_path_bad_comparison_path_is_an_error_not_a_crash():
@@ -114,7 +114,39 @@ def test_eq_path_passes_when_mirrored():
 def test_path_matching_nothing_fails_rather_than_silently_passing():
     out = _run(response_json=GW12_RESPONSE, path="$.body.doesNotExist", operator="eq", expected="1")
     assert out["assertion"] == "FAILED"
-    assert out["reason"] == "path matched nothing"
+    assert out["reason"].startswith("path matched nothing")
+
+
+def test_path_matching_nothing_names_the_keys_that_do_exist():
+    """A path that matches nothing is usually a typo in the path, not an absent field.
+    Naming the keys at the closest parent that resolved is what lets the caller tell the
+    two apart instead of reporting its own typo as a defect in the service under test."""
+    out = _run(response_json=GW12_RESPONSE, path="$.body.myPage.hasScaleResults", operator="eq", expected="true")
+    assert out["assertion"] == "FAILED"
+    assert "$.body.myPage" in out["reason"]
+    assert "hasScaleResult" in out["reason"]
+
+
+def test_sequence_is_compared_whole_when_expected_is_a_list():
+    """`choices[*].choiceValue` matches six values; comparing only the first against a
+    six-element expectation can never pass, so a list expectation compares the whole run."""
+    payload = json.dumps({"choices": [{"v": 1}, {"v": 2}, {"v": 3}]})
+    assert _run(response_json=payload, path="$.choices[*].v", operator="eq", expected="[1,2,3]")["assertion"] == "PASSED"
+    assert _run(response_json=payload, path="$.choices[*].v", operator="eq", expected="[3,2,1]")["assertion"] == "FAILED"
+
+
+def test_string_int64_matches_a_numeric_expectation():
+    """protojson serialises int64 as a JSON string, so an actual of "0" has to satisfy
+    expected=0 — otherwise every status-code assertion in an ESM case fails on type alone."""
+    out = _run(response_json='{"statusCode":"0"}', path="$.statusCode", operator="eq", expected="0")
+    assert out["assertion"] == "PASSED"
+    assert "matched as text" in out["note"]
+
+
+def test_count_eq_counts_array_elements_not_path_matches():
+    """`$.items` matches the array itself, so counting matches reports 1 for an empty list."""
+    assert _run(response_json='{"items":[]}', path="$.items", operator="count_eq", expected="0")["assertion"] == "PASSED"
+    assert _run(response_json='{"items":[1,2]}', path="$.items", operator="count_eq", expected="2")["assertion"] == "PASSED"
 
 
 def test_unknown_operator_is_an_error_not_a_silent_pass():
@@ -133,3 +165,81 @@ def test_invalid_jsonpath_is_an_error():
     out = _run(response_json=GW12_RESPONSE, path="$[[[", operator="eq", expected="1")
     assert out["assertion"] == "ERROR"
     assert "bad JSONPath" in out["reason"]
+
+
+def test_captured_variable_used_as_a_path_is_named_as_such():
+    """The observed failure in TC-ESM30-CH-22: an id captured in an earlier step was looked
+    up as $.captured.userMessageId in a LATER response, where no `captured` key exists. The
+    failure has to say the value is a variable, or the caller reads it as a missing field."""
+    from testzeus_hercules.core.tools.api_calls import _var_store
+
+    _var_store()["userMessageId"] = "m_1"
+    out = _run(
+        response_json='{"body":{"messages":[{"messageId":"m_1"}]}}',
+        path="$.body.messages[0].messageId",
+        operator="eq_path",
+        expected="$.captured.userMessageId",
+    )
+    assert out["assertion"] == "FAILED"
+    assert "${userMessageId}" in out["reason"]
+
+
+def test_operator_smuggled_into_expected_is_an_error_not_a_mismatch():
+    """Also from CH-22: operator="eq" with expected="ne_path:$.captured.x". Compared as a
+    literal it fails every time, which reads as the service being wrong rather than the call."""
+    out = _run(response_json='{"a":"1"}', path="$.a", operator="eq", expected="ne_path:$.b")
+    assert out["assertion"] == "ERROR"
+    assert "operator" in out["reason"]
+
+
+def test_operator_smuggled_into_expected_covers_every_observed_form():
+    """三种形态都出自真实运行的 assertion_logs.log。第一版守卫只挡住了无冒号那种，
+    带尾随冒号的 "not_empty:" 漏了过去 —— 而那恰恰是模型最常写的一种。"""
+    for bogus in ("not_empty", "not_empty:", "exists:", "ne_path:$.captured.x", "eq:$.other"):
+        out = _run(response_json='{"a":"x"}', path="$.a", operator="eq", expected=bogus)
+        assert out["assertion"] == "ERROR", f"{bogus!r} 应判 ERROR，实际 {out['assertion']}"
+
+
+def test_a_colon_in_an_ordinary_expected_value_still_compares():
+    """The guard keys on a JSONPath after the colon, so ordinary values keep working."""
+    assert _run(response_json='{"a":"foo:bar"}', path="$.a", operator="eq", expected="foo:bar")["assertion"] == "PASSED"
+
+
+def test_not_empty_closes_the_holes_that_ne_empty_leaves():
+    """ "非空"写成 `ne ""` 会放过 JSON null 和未替换的 ${占位符} —— 恰好是它本该拦住的两种。"""
+    payload = '{"a":"x","empty":"","nul":null,"ph":"${notReplaced}"}'
+    assert _run(response_json=payload, path="$.a", operator="not_empty")["assertion"] == "PASSED"
+    for field in ("empty", "nul", "ph"):
+        assert _run(response_json=payload, path=f"$.{field}", operator="not_empty")["assertion"] == "FAILED"
+    # ne "" 仍然可用，但结果里要说清它的边界
+    out = _run(response_json=payload, path="$.nul", operator="ne", expected="")
+    assert out["assertion"] == "PASSED"
+    assert "not_empty" in out["note"]
+
+
+def test_expected_with_an_uncaptured_variable_is_an_error_not_a_pass():
+    """未捕获的 ${name} 原样留在 expected 里时，`ne` 永远通过 —— 最坏的一种假绿。"""
+    out = _run(response_json='{"a":"x"}', path="$.a", operator="ne", expected="${neverCaptured}")
+    assert out["assertion"] == "ERROR"
+    assert "没有被捕获过" in out["reason"]
+
+
+def test_every_assertion_is_recorded_not_just_the_failures():
+    """通过的断言不留痕的话，一条绿色用例就无法审计：分不出它断言了十次全过，
+    还是一次都没断言、由模型自己读着说通过。"""
+    import json as _json
+    import tempfile
+
+    from testzeus_hercules.config import get_global_conf
+
+    folder = tempfile.mkdtemp()
+    original = get_global_conf().get_proof_path
+    get_global_conf().get_proof_path = lambda *a, **k: folder
+    try:
+        _run(response_json='{"a":"x"}', path="$.a", operator="eq", expected="x")
+        _run(response_json='{"a":"x"}', path="$.a", operator="eq", expected="WRONG")
+        with open(f"{folder}/assertion_logs.log", encoding="utf-8") as handle:
+            records = [_json.loads(line) for line in handle if line.strip()]
+    finally:
+        get_global_conf().get_proof_path = original
+    assert [r["assertion"] for r in records] == ["PASSED", "FAILED"]
