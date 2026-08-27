@@ -183,6 +183,20 @@ async def assert_json_path(
         result = {"assertion": "ERROR", "path": path, "operator": operator, "reason": f"response_json is not valid JSON: {e}{hint}"}
         return _record(result)
 
+    # 把运算符写进期望值是模型最顽固的一个习惯：给出精确提示之后，实测它仍会连着重试
+    # 五次同样的写法（TC-ESM30-PF-07），然后退化成一个揉坏的字典。诊断信息是给人看的，
+    # 模型需要的是"这个错犯不出来"的形状。这里在 operator 还是默认值 eq、而 expected
+    # 恰好是个运算符名时直接改判，并在结果里留 note——不静默，台账里数得出来它发生了多少次。
+    if operator == "eq":
+        candidate = expected.strip().rstrip(":")
+        if candidate in _OPERATORS and candidate != "eq":
+            operator, expected = candidate, ""
+            _autocorrected = f"expected 里写的是运算符名，已按 operator={candidate} 执行"
+        else:
+            _autocorrected = ""
+    else:
+        _autocorrected = ""
+
     path = interpolate_value(path)
     if not isinstance(path, str):
         path = str(path)
@@ -194,6 +208,8 @@ async def assert_json_path(
         return _record(result)
 
     result: dict = {"path": path, "operator": operator}
+    if _autocorrected:
+        result["note"] = _autocorrected
 
     if operator == "exists":
         passed = len(matches) > 0

@@ -192,12 +192,22 @@ def test_operator_smuggled_into_expected_is_an_error_not_a_mismatch():
     assert "operator" in out["reason"]
 
 
-def test_operator_smuggled_into_expected_covers_every_observed_form():
-    """三种形态都出自真实运行的 assertion_logs.log。第一版守卫只挡住了无冒号那种，
-    带尾随冒号的 "not_empty:" 漏了过去 —— 而那恰恰是模型最常写的一种。"""
-    for bogus in ("not_empty", "not_empty:", "exists:", "ne_path:$.captured.x", "eq:$.other"):
+def test_operator_name_in_expected_is_auto_corrected():
+    """把运算符写进期望值是模型最顽固的习惯：给出精确提示后它仍会连着重试五次同样的写法
+    （TC-ESM30-PF-07 实测），然后退化成一个揉坏的字典。诊断信息是给人看的，模型需要的是
+    "这个错犯不出来"的形状 —— 所以改判而不是报错，但要在 note 里留痕，好数它发生多少次。"""
+    for bogus in ("not_empty", "not_empty:", "exists"):
         out = _run(response_json='{"a":"x"}', path="$.a", operator="eq", expected=bogus)
-        assert out["assertion"] == "ERROR", f"{bogus!r} 应判 ERROR，实际 {out['assertion']}"
+        assert out["assertion"] == "PASSED", f"{bogus!r} 应被改判，实际 {out['assertion']}"
+        assert "运算符名" in out["note"]
+    # 改判不等于放水：空值仍要判否
+    assert _run(response_json='{"a":""}', path="$.a", operator="eq", expected="not_empty")["assertion"] == "FAILED"
+
+
+def test_invented_operator_prefix_is_still_an_error():
+    """自造的前缀（ne_path 根本不在运算符表里）没法改判，只能明确报错。"""
+    for bogus in ("ne_path:$.captured.x", "eq:$.other"):
+        assert _run(response_json='{"a":"x"}', path="$.a", operator="eq", expected=bogus)["assertion"] == "ERROR"
 
 
 def test_a_colon_in_an_ordinary_expected_value_still_compares():
