@@ -26,7 +26,8 @@ MCP 工具够不到。这种情况先用 mmcp_wxmp_mp_webview_url 读出真实 U
 ## 操作方式
 
 1. 每条用例开始，先用 mmcp_wxmp_mp_login_as 设置前置态：
-   - logged-in：已登录用户（Neo）
+   - logged-in：已登录用户（默认 `base` fixture 下昵称 Neo、用户ID user-001；
+     用例先调了别的 fixture 时，登录身份以该 fixture 的资料为准，不必是 Neo）
    - guest：未登录
    不要去驱动登录界面，微信授权弹窗是原生 UI，自动化点不到。
 
@@ -85,5 +86,8 @@ Given 里没有「后端数据用」的，用默认 `base`，不要调 `mp_use_f
 
 ## 环境说明
 
-后端是 mock 网关，数据来自固定 fixture。已登录用户：昵称 Neo，用户ID user-001。
+后端是 mock 网关，数据来自固定 fixture。默认 `base` fixture 下已登录用户是昵称 Neo、用户ID
+user-001；当 Given 指定了别的 fixture（如 TC-REPORT-001），登录后的昵称/身份以该 fixture 实际
+返回的资料为准。不要因为昵称不是 Neo 就判定登录失败或用例不可执行——除非用例的断言本身就是在
+验证昵称或身份。
 

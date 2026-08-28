@@ -110,6 +110,7 @@ curl -s http://127.0.0.1:39102/calls
 | 关系对话 | `TC-HOME-001/snapshot`（上游，注意带 `/`） | 关系对话 1 条，已设标签和备注 |
 | 关系对话 | `state-relationship-chat-untagged` | 关系对话 1 条，有备注、无标签 |
 | 关系对话 | `state-relationship-chat-default-nickname` | 关系对话 1 条，无备注（显示默认昵称）、有标签 |
+| 关系对话（席位占满） | `state-relationships-6` | 「我的咨询」6 条关系，席位显示 `6 / 6 席`；最后一条无标签，顺带覆盖无标签渲染分支。席位数是 UI 按 `items.length / 6` 现算的，不是后端字段，所以只要给满 6 条就是 6/6 |
 | 关系原子转正式 | `TC-HOME-001/candidate-mutation`（上游） | 候选关系转成正式咨询关系的中间态 |
 | 个人对话历史 | `state-chat-history-6` | 个人对话已有三轮问答共六条消息 |
 | 个人对话历史 | `TC-PERSON-CHAT-001/new` / `/existing`（上游） | 新建对话 vs 已有对话，无需叠片段 |

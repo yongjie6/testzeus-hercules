@@ -1,0 +1,75 @@
+{
+  "method": "GET",
+  "path": "/api/esm/v1/home/state",
+  "response": {
+    "canCreateRelationshipShare": true,
+    "conversationRelationships": [
+      {
+        "conversationRelationshipId": "relationship-six-001",
+        "candidateRelationshipId": "candidate-six-001",
+        "targetUser": { "userId": "101", "nickname": "登登老", "userInfoCompleted": true },
+        "setting": { "remarkName": "登登老", "tagText": "同学" },
+        "latestChatId": "chat-six-001",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000006000",
+        "activatedAtMs": "1700000006000",
+        "latestChatSummary": "他的从容感，不是天生淡定，而是很清楚自己要什么。"
+      },
+      {
+        "conversationRelationshipId": "relationship-six-002",
+        "candidateRelationshipId": "candidate-six-002",
+        "targetUser": { "userId": "102", "nickname": "葫芦爸", "userInfoCompleted": true },
+        "setting": { "remarkName": "葫芦爸", "tagText": "家人" },
+        "latestChatId": "chat-six-002",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000005000",
+        "activatedAtMs": "1700000005000",
+        "latestChatSummary": "你们已经完成答题，可以从彼此的报告差异开始聊起。"
+      },
+      {
+        "conversationRelationshipId": "relationship-six-003",
+        "candidateRelationshipId": "candidate-six-003",
+        "targetUser": { "userId": "103", "nickname": "阿蓝", "userInfoCompleted": true },
+        "setting": { "remarkName": "阿蓝", "tagText": "同事" },
+        "latestChatId": "chat-six-003",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000004000",
+        "activatedAtMs": "1700000004000",
+        "latestChatSummary": "他在意流程和边界，先对齐规则会让沟通顺很多。"
+      },
+      {
+        "conversationRelationshipId": "relationship-six-004",
+        "candidateRelationshipId": "candidate-six-004",
+        "targetUser": { "userId": "104", "nickname": "小周", "userInfoCompleted": true },
+        "setting": { "remarkName": "小周", "tagText": "朋友" },
+        "latestChatId": "chat-six-004",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000003000",
+        "activatedAtMs": "1700000003000",
+        "latestChatSummary": "她更看重被理解，而不是被给建议。"
+      },
+      {
+        "conversationRelationshipId": "relationship-six-005",
+        "candidateRelationshipId": "candidate-six-005",
+        "targetUser": { "userId": "105", "nickname": "老陈", "userInfoCompleted": true },
+        "setting": { "remarkName": "老陈", "tagText": "同学" },
+        "latestChatId": "chat-six-005",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000002000",
+        "activatedAtMs": "1700000002000",
+        "latestChatSummary": "他习惯先扛下来再说，很少主动开口求助。"
+      },
+      {
+        "conversationRelationshipId": "relationship-six-006",
+        "candidateRelationshipId": "candidate-six-006",
+        "targetUser": { "userId": "106", "nickname": "小满", "userInfoCompleted": true },
+        "setting": { "remarkName": "小满", "tagText": "" },
+        "latestChatId": "chat-six-006",
+        "latestChatTitle": "关系咨询",
+        "latestMessageAtMs": "1700000001000",
+        "activatedAtMs": "1700000001000",
+        "latestChatSummary": "刚建立联系，还没聊过几句。"
+      }
+    ]
+  }
+}

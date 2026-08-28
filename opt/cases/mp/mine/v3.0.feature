@@ -1,8 +1,5 @@
 Feature: 小程序个人中心与注销
 
-  # 前瞻性用例：当前 wxmp MCP server 的路由表尚未覆盖本产品线的页面，
-  # 语法有效但暂不可执行。见 openspec/prds/esm-v3-0/v3.0/gherkin-map.yaml 顶部说明。
-
   # 由 esm-v3-0/v3.0 的 v2 用例源按 docs/gherkin-ready-case-authoring.md 生成。
   # 计数断言不指定计数手段，交给 agent 选 mp_page_data 或 mp_snapshot；
   # 快照对同文案无 id 的重复节点会去重，计数优先走 page data。
