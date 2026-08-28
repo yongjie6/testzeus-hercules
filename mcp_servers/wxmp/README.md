@@ -143,6 +143,81 @@ cd <miniapp>/packages/app && TARO_OUTPUT_ROOT="$(pwd)/dist-integration" TARO_APP
 第一步失败，而不是拖到后面报一个看不懂的错——这一层 preflight 判断不了（`cli` 不暴露
 当前打开的项目，磁盘上的产物又和已加载的项目没有绑定关系）。
 
+### 用手机号登录：mp_login_with_phone（推荐）
+
+上面那个按钮只能造全新随机账号，指定不了登录到谁。`mp_login_with_phone({ phone })` 直接调
+按钮背后那两个接口，把手机号变成可选参数：
+
+- **传 `phone`**：登录这个手机号。账号不存在就先注册再登录，所以**同一个号可以反复登，每次都是
+  同一个账号**，适合"跑一个已经做完量表/已有报告的固定账号"这种场景。
+- **不传 `phone`**：生成一个随机号注册登录，等价于点那个按钮。
+
+这条路不需要验证码：`login-by-phone` / `register-by-phone` 在这条泳道上对任何手机号都免验证，
+这正是「使用 Narnia 测试账号」按钮用的旁路（`narniaIntegrationAuth.weapp.ts`）。手机号本身
+敏感度远低于 token，可以直接当参数传；返回文本里的手机号是打码的，token 不出现。
+
+**`register-by-phone` 的返回值不可信，别拿它判断成功**。实测一次成功的注册，它会回一个非零
+`statusCode`、`user` 为 null、也没有 token，但紧接着的 `login-by-phone` 证明账号确实建好了。
+`narniaIntegrationAuth.weapp.ts` 自己也是这么处理的——发出去就丢掉返回值，只认随后那次登录。
+
+#### ⚠️ productId 必须和包对上，否则症状极具迷惑性
+
+`--real-product-id` 要等于**被测包编译进去的** `TARO_APP_PRODUCT_ID`。`dist-integration` 编的是
+`esm_miniprogram`（已是默认值），**不是** `run-esm-api.sh` 里那个 `narnia`。
+
+账号是按产品隔离的：同一个手机号在两个 product 下是两个不同的 userId。用错了 productId 的话，
+登录会"成功"、token 也确实有效，但 app 拿它去调 `GetMe` 会得到空用户，于是走进
+`syncUserFromServer` 的 `logout()` 分支，把刚写进去的凭据清掉、退回 guest。表现出来是
+**首页永远停在"正在加载…"，不报错、不重试**，看起来像后端挂了或者账号有问题，实际两者都没事。
+排查时可以用"存一个非 auth 的 key 再重启"来区分：那个 key 还在、只有 auth 键没了，就是 app 自己
+登出的。
+
+### 用账号池登录：mp_use_real_account
+
+如果你手上已经有现成的 token（不想让工具去注册/登录），用 `mp_use_real_account({ state })`——
+这是 `docs/mp-real-backend-plan.md` 里"账号池"设计的落地版本，只管消费和登录，账号怎么来
+交给使用者自己。日常想指定账号的话，上面的 `mp_login_with_phone` 更省事。
+
+**账号从 `opt/.accounts/pool.json` 读**，格式和怎么加一个账号见 `opt/.accounts/README.md`。
+这个目录被 `.gitignore` 显式排除（见其中注释），`token` 是能登录真实后端的活密钥，不进版本库。
+
+配置走 `mcp_servers.json` 的 args：`--account-pool <path>`、`--real-base-url`、`--real-lane`
+（默认 `https://zmapi-test.daqian369.com` / `feat-esm-v3-0`，和 `run-esm-api.sh` 一致）。
+MCP stdio 边界不传环境变量，只能用 flag。
+
+**token 全程不进 LLM**（设计约束③的延伸）：`mp_use_real_account` 只接受 `state` 这一个参数，
+账号从池子文件读、Bearer token 只用来在 Node 进程内直接打一次真实后端的 `home/state` 自验，
+成功了才继续登录；返回给模型的文本只有账号 id 和落点页面，没有 token 本身。相应地
+`mp_get_storage("esm_tokens")` 也被改成直接拒绝返回内容——不然模型读一次 storage 就等于
+绕过了整套设计。
+
+两个真实登录工具都会自己完成冷启动，不需要额外调 `mp_restart`。注意顺序和 `mp_login_as`
+**相反**：先写 storage、再 `restartMiniProgram`。因为 `initSession()` 只在 `app.ts` 的
+`onLaunch` 里跑一次，而 `reLaunch` 是页面级跳转、不会重新触发它——先重启后写凭据的话，
+写进去的东西永远没人读，症状同样是首页停在"正在加载…"。
+
+storage 的键名是 **snake_case**（`access_token` / `refresh_token` / `user_id`），
+见 `shared/utils/storage.ts`；解析器读不到就直接返回 null，写成 camelCase 会静默降级成
+未登录。工具内部统一做这层映射，调用方不用管。
+
+#### ⚠️ 当前实现会直接落到首页，绕过 entryStage 路由
+
+两个真实登录工具目前都是 `restartMiniProgram` 到**首页**，所以不管后端算出来的
+`entryStage` 是什么，登录完都停在首页。但应用自己的行为不是这样：让它从**启动页**冷启动，
+它会按 `entryStage` 自行路由——实测一个全新账号（资料未填）会落到
+`features/profile/pages/required/index`（填写信息页），这也正是 `opt/cases/mp-real/smoke`
+里 `TC-ESM30-RS-01` 断言的落点。
+
+因此**凡是断言"新用户该落到哪一页"的用例，不能用这两个工具做前置**，否则起始状态就是错的。
+这类用例目前得走应用自己的登录入口（启动页那个「使用 Narnia 测试账号」按钮）。
+
+想改的话方向是：重启到启动页、让应用自己路由，再把落点报出来。附带好处是能一起去掉下面
+那个"切走再切回"的兜底——A/B 实测过，走启动页这条路不会踩到首页的会话竞态（见
+`opt/cases/mp-real` 相关缺陷）。改之前需要把 mp-real 套件重新跑一遍确认。
+
+用过一次的账号会立刻标记 `consumedAtMs` 并写回文件，同一个账号不会被后续用例重复拿到；
+`baseUrl`/`lane` 和当前配置对不上会直接拒绝，不会拿着一个可能已经作废的 token 硬跑。
+
 ### 域名校验每个新项目路径都要手动勾一次
 
 和 `dist-scenario` 一样，**换一个从没打开过的项目路径就要重新勾一次**：
@@ -233,10 +308,12 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 | `mp_navigate` | 命名路由跳转（启动页/首页/对话/我的/量表/报告/…），自动选 switchTab 还是 reLaunch |
 | `mp_tap_text` | 按可见文案点击，对齐 getByText |
 | `mp_login_as` | `logged-in` / `guest` 前置态 |
+| `mp_login_with_phone` | mp-real 专用：按手机号登录真实后端（不传 `phone` 就随机注册一个），免验证码，token 不进 LLM |
+| `mp_use_real_account` | mp-real 专用：从本地账号池（`opt/.accounts/pool.json`）登录一个真实后端账号，token 不进 LLM |
 | `mp_use_fixture` | 设后端数据状态，多个名字可组合（见 [fixtures/README.md](fixtures/README.md)），**要在 `mp_login_as` 之前调** |
 | `mp_swipe` | 手势，带 `until` 会重试到目标文案出现 |
 | `mp_long_press` | 按住不放，`duration` 控制时长（微信 350ms 起算长按），`until` 同上 |
-| `mp_trigger` | 发组件事件；输入框用 `into`（placeholder）定位，它自己没有文案 |
+| `mp_trigger` | 发组件事件；输入框用 `into`（placeholder）定位，**原生控件用 `selector` 定位**（见下方「原生控件只能发事件」）|
 | `mp_current_page` | 当前路由与 query |
 | `mp_tap` / `mp_input` | 按选择器点击 / 输入（兜底） |
 | `mp_get_text` / `mp_element_exists` | 按选择器断言（兜底） |
@@ -310,6 +387,52 @@ mp_ws_push({"event_id":"e1","chat_id":"<id>","generation_id":"gen-1","seq_id":"0
 ```bash
 SKIP_BROWSER=true ./run-version.sh 1.0 mp
 ```
+
+## 截图是怎么产生的
+
+两种来源，文件名一眼可分：
+
+| 文件名 | 何时产生 | 拍到的是 |
+| --- | --- | --- |
+| `<stamp>_001_<工具>_<页面>.png` … | 每次执行**动作类**工具（`CAPTURED` 名单：tap / navigate / trigger / swipe / login 等） | 动作发生那一刻的画面 |
+| `<stamp>_999_final_state.png` | 进程收到 SIGTERM，即**该条用例结束时** | 用例最后停在哪一页 |
+
+**为什么需要终态那一张**：自动截图只在动作发生时触发，而用例的最后一步几乎都是断言，
+断言走 `mp_snapshot`（不产生截图）。于是磁盘上最后一张图是**跳转之前**的页面——
+恰好不是被断言的那一页。扫过一遍现有用例：126 条里有 124 条是这个形状，说明这是机制
+本身的性质，不是哪条用例写漏了。Hercules 每条用例跑完都会 kill 掉本进程
+（`MCPHelper.destroy`），所以 SIGTERM 正好等于"这条用例刚结束"，一条用例多一张图，
+**不需要改任何用例**。
+
+序号用 999 是为了让它排在自动截图之后，一眼认得出是终态。整个过程 best-effort：
+截图失败不影响退出，5 秒超时兜底（连接可能已经半死），并且做了重入保护
+（SIGINT 紧跟 SIGTERM 会触发两次 shutdown）。`--auto-screenshot off` 会同时关掉两种。
+
+**只在显式配了 `--proof-dir`（或 `WXMP_PROOF_DIR`）时才截**。没配时 `PROOF_DIR` 会退到
+`process.cwd()`，而这一张是每次 SIGTERM 都触发的——不加这道门槛，`npm run smoke`
+和任何手工起的 server 都会往 `mcp_servers/wxmp/` 里扔一张截图。Hercules 每次都会传
+`--proof-dir`，所以这道门槛只挡噪音，不会挡掉真正的存证。
+（动作截图保持原有行为：那是有人真的驱动了一步，可能确实想看。）
+
+## proof 目录会被校验
+
+写之前先过 `proofDirReady()`（只查一次并记住结果）：
+
+- **明显不对的路径直接拒写**——值是 `undefined`，或含没被展开的 `${...}`。
+  这类值交给 `mkdirSync(..., {recursive:true})` 会老老实实建出一个 `./undefined/` 或
+  `./${proof_path}/` 垃圾目录，然后每次截图都"成功"，证据就这么无声无息地丢了。
+- **其余路径真的去建目录并检查可写**，所以"看着正常但其实写不了"也会在启动时就报出来，
+  而不是等第一次截图才静默失败。
+
+校验不过时不会让用例失败——proof 目录不对，不该判掉一条断言本身没问题的用例。
+
+**但要注意：这种情况下报告里看不出"这轮没有证据"，唯一的信号是 stderr 那条 WARNING**
+（它会进 Hercules 的运行日志）。原因是没地方留标记：报告里的 `Evidence Missing` 属性来自
+proofs 目录下的 `EVIDENCE_MISSING.txt`，而这里的前提恰恰是那个目录不可用——写不进去，
+写到别处又会变成新的垃圾文件。所以 proof 目录配错时，请以日志里的 WARNING 为准，
+不要因为报告没报 Evidence Missing 就以为证据是齐的。
+
+（下一节说的是另一回事：目录本身是好的、只是某次截图失败，那种情况有标记可写。）
 
 ## 截不到图的时候
 
@@ -419,12 +542,36 @@ Scenario: 内嵌 H5 活动页能正常下单
 
 `adb forward tcp:9222 localabstract:xweb_devtools_remote_<pid>`，配合在微信里访问 `http://debugxweb.qq.com/?inspector=true` 开启远程调试。只在必须验证真机行为时用，不适合进 CI。
 
+## 原生控件只能发事件，而且必须用 selector 定位
+
+微信原生控件（`<button open-type="chooseAvatar">`、`<picker mode="date">` 这类）点不开，
+只能用 `mp_trigger` 直接发它监听的事件绕过去：
+
+| 控件 | selector | event | detail |
+| --- | --- | --- | --- |
+| 头像选择 | `button[open-type='chooseAvatar']` | `chooseavatar` | `{"avatarUrl": "<包内图片路径>"}` |
+| 日期选择 | `picker` | `change` | `{"value": "1995-08-26"}` |
+
+**一定要用 `selector`，不要用 `text`。** 这类控件的可见文案通常在子节点上，按文案定位会命中
+那个 `<text>`，而处理器绑在外层组件上——事件发到没有处理器的节点上，工具照样返回成功，
+页面却毫无变化。这种静默失败很难查：从返回值看每一步都"成功"，只有最后提交时才发现
+表单根本没填上。（`opt/cases/mp-real/full-flow` 那条用例就是这么跑挂过一轮的。）
+
+发完事件后用 `mp_snapshot` 确认控件文案变了再往下走，例如头像按钮会从「点击设置头像」
+变成「点击更换」，日期控件会从「选择出生年月日」变成具体日期。
+
 ## 已知边界
 
 - **原生弹窗点不到** —— 授权、支付、订阅消息都是原生 UI，只能 `mp_mock_wx` 绕
 - **支付流程**基本无法在模拟器自动化
 - **手机号授权解密**依赖真实 `session_key`，模拟器里可能拿不到有效数据
 - **CI 需要 macOS / Windows runner** —— 微信开发者工具没有 Linux 版，进不了 Docker
+- **`mp_evaluate` 只收表达式，不收语句块** —— 小程序逻辑层没有 `eval`/`new Function`，所以
+  表达式是在 Node 侧用 `new Function` 包好、靠 `miniprogram-automator` 序列化函数源码带过去
+  执行的。要跑多条语句就自己包一个 IIFE：`(function(){ ...; return x })()`
+- **事后挂 `wx.request` 钩子拦不到请求** —— Taro 在模块初始化时就抓住了 `wx.request` 的引用，
+  连上自动化之后再替换 `wx.request` 只能拦到之后手写的调用，抓不到应用自己发的。想看应用的
+  真实请求，用 mock 网关的 `GET /calls`（mp 套件），或者开发者工具的 Network 面板
 
 ## TODO
 

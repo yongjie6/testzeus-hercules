@@ -43,6 +43,53 @@ function flag(name, fallback = "") {
 
 const WS_ENDPOINT = flag("endpoint", process.env.WXMP_WS_ENDPOINT || "ws://localhost:9420");
 const PROOF_DIR = flag("proof-dir", process.env.WXMP_PROOF_DIR || process.cwd());
+// Whether anyone actually said where proofs go. Falling back to cwd means
+// nobody did -- a hand-run server, `npm run smoke`, a debugging session --
+// and those should not drop evidence into the source tree. Hercules always
+// passes --proof-dir, so this only ever suppresses noise, never real proofs.
+const PROOF_DIR_EXPLICIT =
+  process.argv.includes("--proof-dir") || Boolean(process.env.WXMP_PROOF_DIR);
+// Screenshots are written wherever this points, and mkdirSync happily creates
+// whatever it is told to -- so a placeholder that never got expanded, or an
+// undefined value from a hand-rolled invocation, silently produces a junk
+// directory like ./undefined/ or ./${proof_path}/ while every capture still
+// reports success. Evidence then goes missing in a way nothing surfaces.
+// Warn loudly rather than throw: a bad proof dir should not abort a run whose
+// assertions are otherwise fine.
+const PROOF_DIR_SUSPECT =
+  PROOF_DIR.includes("${") || PROOF_DIR === "undefined" || PROOF_DIR.endsWith("/undefined");
+
+/**
+ * Whether proofs may be written, checked once and remembered.
+ *
+ * A recognisably wrong path is refused outright rather than created: the whole
+ * failure mode being guarded against is mkdirSync happily materialising
+ * ./undefined/ or ./${proof_path}/ and every capture then reporting success
+ * into it. Anything else is verified by actually creating the directory and
+ * checking it is writable, so a path that only looks fine still fails here
+ * rather than silently at the first screenshot.
+ */
+let proofDirState = null;
+function proofDirReady() {
+  if (proofDirState !== null) return proofDirState;
+  if (PROOF_DIR_SUSPECT) {
+    log(
+      `WARNING: --proof-dir looks wrong (${PROOF_DIR}) -- refusing to write ` +
+        "proofs there. This run will produce no screenshots."
+    );
+    proofDirState = false;
+    return proofDirState;
+  }
+  try {
+    fs.mkdirSync(PROOF_DIR, { recursive: true });
+    fs.accessSync(PROOF_DIR, fs.constants.W_OK);
+    proofDirState = true;
+  } catch (err) {
+    log(`WARNING: proof dir is not writable (${PROOF_DIR}): ${err.message}`);
+    proofDirState = false;
+  }
+  return proofDirState;
+}
 const CONNECT_TIMEOUT = Number(flag("connect-timeout", process.env.WXMP_CONNECT_TIMEOUT || 30000));
 const FIXTURE_DEFAULTS = flag("fixture", process.env.WXMP_FIXTURE_DEFAULTS || "");
 // The mock gateway is long-lived here (gateway.mts), so a case cannot get a
@@ -73,9 +120,32 @@ const BASELINE_DIR = flag("baseline-dir", process.env.WXMP_BASELINE_DIR || "");
 
 const AUTO_SHOT = flag("auto-screenshot", process.env.WXMP_AUTO_SCREENSHOT || "on") !== "off";
 
+// mp-real (dist-integration + a real lane) needs a real credential, not a mock
+// token. mp_use_real_account reads it from a local, gitignored pool file
+// instead of taking it as a tool argument -- design constraint ③ (see this
+// server's header comment): token text must never enter LLM context. baseUrl
+// and lane are also read from flags so the tool can refuse to serve an
+// account built against a different lane instead of failing inside an
+// assertion.
+const ACCOUNT_POOL_PATH = flag("account-pool", process.env.WXMP_ACCOUNT_POOL || "");
+const REAL_BASE_URL = flag("real-base-url", process.env.WXMP_REAL_BASE_URL || "https://zmapi-test.daqian369.com");
+const REAL_LANE = flag("real-lane", process.env.WXMP_REAL_LANE || "feat-esm-v3-0");
+// Must match the productId compiled into the bundle under test
+// (TARO_APP_PRODUCT_ID; dist-integration builds "esm_miniprogram"), not the
+// one run-esm-api.sh uses for the API suites ("narnia"). Accounts are scoped
+// per product: registering a phone under "narnia" and then letting the app --
+// which stamps every request with its own productId -- call GetMe returns no
+// user for that token. The app reads that as a dead session and calls
+// logout(), which wipes the credentials just written, drops back to guest,
+// and leaves the home page on "正在加载..." forever. The token is valid the
+// whole time, which is what makes the mismatch so hard to see from outside.
+const REAL_PRODUCT_ID = flag("real-product-id", process.env.WXMP_REAL_PRODUCT_ID || "esm_miniprogram");
+
 /** Tools that change what is on screen and are therefore worth capturing. */
 const CAPTURED = new Set([
   "mp_login_as",
+  "mp_use_real_account",
+  "mp_login_with_phone",
   "mp_navigate",
   "mp_tap_text",
   "mp_tap",
@@ -98,6 +168,10 @@ const RUN_STAMP = new Date()
 
 async function captureAfter(toolName) {
   if (!AUTO_SHOT || !CAPTURED.has(toolName)) return null;
+  if (!proofDirReady()) {
+    noteEvidenceGap(`${toolName}: proof dir unusable (${PROOF_DIR})`);
+    return null;
+  }
   try {
     const mp = await getMiniProgram();
     const page = await mp.currentPage();
@@ -120,6 +194,7 @@ async function captureAfter(toolName) {
 
 /** Record a failed capture where the report generator will find it. */
 function noteEvidenceGap(detail) {
+  if (PROOF_DIR_SUSPECT) return;
   try {
     fs.mkdirSync(PROOF_DIR, { recursive: true });
     fs.appendFileSync(
@@ -496,7 +571,21 @@ async function elementShowing(text, exact = false) {
  * than by text, so events aimed at them (blur, focus) were unreachable while
  * text was the only way to name a target.
  */
-async function elementTarget({ text, into }) {
+async function elementTarget({ text, into, selector }) {
+  // A selector addresses the component itself. Text lookup resolves to the
+  // node that *shows* the text, which for a composite control is usually a
+  // <text> nested inside it -- firing the event there hits a node with no
+  // handler, so the call reports success and nothing happens. Native-backed
+  // controls (a chooseAvatar <button>, a <picker mode="date">) are exactly
+  // that shape, and they are also the ones that can only be driven by event,
+  // never by tapping, so they need a way to name the component directly.
+  if (selector) {
+    const mp = await getMiniProgram();
+    const page = await mp.currentPage();
+    const el = await page.$(selector);
+    if (!el) throw new Error(`No element matching selector "${selector}" on ${page.path}.`);
+    return { el, target: { tag: selector, text: "", label: "" } };
+  }
   if (text) return elementShowing(text);
   const { page, nodes } = await readPage();
   const matches = findInputs(nodes, into || "");
@@ -697,6 +786,15 @@ const TOOLS = [
           description:
             "Placeholder of the target input, for fields that show no text of " +
             "their own. Give this or `text`.",
+        },
+        selector: {
+          type: "string",
+          description:
+            "WXML selector naming the component itself, e.g. 'picker' or " +
+            "\"button[open-type='chooseAvatar']\". Use this for native-backed " +
+            "controls (date picker, chooseAvatar button): they cannot be tapped, " +
+            "and matching on their visible text lands on an inner <text> node " +
+            "that has no handler, so the event silently does nothing.",
         },
         event: {
           type: "string",
@@ -992,6 +1090,52 @@ const TOOLS = [
     },
   },
   {
+    name: "mp_use_real_account",
+    description:
+      "mp-real only: sign in against the real backend with a credential from " +
+      "the local account pool instead of a mock token. Consumes one unused " +
+      "account, restarts the app cold, and self-verifies the token against the " +
+      "real backend before returning -- the token itself never appears in the " +
+      "result. Requires --account-pool to be configured; fails clearly if it " +
+      "is not, or if the pool has no unconsumed account for the requested " +
+      "state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        state: {
+          type: "string",
+          description:
+            "Which pool account to consume, e.g. 'fresh', 'profile-done', " +
+            "'scale-done'. Omit to take any unconsumed account.",
+        },
+      },
+    },
+  },
+  {
+    name: "mp_login_with_phone",
+    description:
+      "mp-real only: sign in against the real backend by phone number, with " +
+      "no SMS code -- this lane's login-by-phone/register-by-phone RPCs accept " +
+      "any phone with no verification (the same bypass the app's own '使用 " +
+      "Narnia 测试账号' button uses). Pass 'phone' to log into that specific " +
+      "account (registers it first if it does not exist yet, so the same " +
+      "number can be reused across runs to land on the same account); omit it " +
+      "to register a fresh, randomly generated one. Restarts the app cold and " +
+      "confirms it landed on home before returning; the token never appears " +
+      "in the result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description:
+            "Phone number to sign in as, e.g. '13800001234'. Omit for a new " +
+            "random test account.",
+        },
+      },
+    },
+  },
+  {
     name: "mp_set_storage",
     description:
       "Write a key into mini program local storage (wx.setStorageSync). Do not " +
@@ -1114,6 +1258,245 @@ const TOOLS = [
   },
 ];
 
+/**
+ * Restarts the mini program and waits for it to settle on a page, dropping
+ * and re-establishing the automation connection along the way. Shared by
+ * mp_restart (explicit) and mp_login_as (implicit -- see the comment there
+ * for why login needs this too, not just clearStorage + reLaunch).
+ */
+async function restartAndSettle(path) {
+  const mp = await getMiniProgram();
+
+  // DevTools tears the automation channel down as it restarts, so this call
+  // often rejects even when the restart itself is fine. Drop the connection
+  // either way and let the reconnect below decide whether it worked.
+  try {
+    await mp.callWxMethod("restartMiniProgram", { path });
+  } catch {
+    // expected when the channel goes first
+  }
+  try {
+    mp.disconnect();
+  } catch {
+    // already gone
+  }
+  miniProgram = null;
+  // The bundle has not changed, but the table was read over a connection
+  // that no longer exists; re-read it rather than reason about what survives.
+  routeTable = null;
+
+  const deadline = Date.now() + CONNECT_TIMEOUT;
+  let lastError;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let fresh;
+    try {
+      fresh = await getMiniProgram();
+      await fresh.currentPage();
+    } catch (err) {
+      lastError = err;
+      miniProgram = null;
+      continue;
+    }
+    // A freshly booted app is still deciding where to go -- the entry page
+    // resolves the session and may route somewhere else entirely, which on a
+    // real backend is the interesting part. Reporting the first page read
+    // back would name a page the app is in the middle of leaving, so wait
+    // until two reads in a row agree before saying where it landed.
+    //
+    // currentPage() itself can time out mid-settle -- the automation channel
+    // is freshly reconnected and the app is still busy booting -- and that is
+    // a transient hiccup, not proof the restart failed. Treat it the same as
+    // a failed reconnect above: drop this connection and let the outer loop
+    // try again, instead of letting it escape and fail the whole restart
+    // (and with it every mp_login_as call, since that now restarts too).
+    try {
+      let previous = null;
+      const settleBy = Date.now() + 8000;
+      while (Date.now() < settleBy) {
+        const here = (await fresh.currentPage()).path;
+        if (here === previous) return here;
+        previous = here;
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      return previous;
+    } catch (err) {
+      lastError = err;
+      miniProgram = null;
+      continue;
+    }
+  }
+  throw new Error(
+    `Restarted the mini program but could not reconnect within ${CONNECT_TIMEOUT}ms ` +
+      `(${lastError?.message || "no error reported"}). DevTools may still be reloading -- ` +
+      "check that its window is open and the project is still loaded."
+  );
+}
+
+// Same phone-space the app's own "使用 Narnia 测试账号" button draws from
+// (narniaIntegrationAuth.weapp.ts createNarniaTestIdentity), offset with a
+// 198 prefix instead of 199 so a random run here can never collide with a
+// number that button already registered.
+function randomTestPhone() {
+  const suffix = String(Math.floor(Math.random() * 1e8)).padStart(8, "0");
+  return { phone: `198${suffix}`, nickname: `联调用户${suffix.slice(-6)}` };
+}
+
+function mapAuthGender(value) {
+  if (value === "GENDER_MALE") return 1;
+  if (value === "GENDER_FEMALE") return 2;
+  return undefined;
+}
+
+async function authCall(pathSuffix, body) {
+  const resp = await fetch(`${REAL_BASE_URL}${pathSuffix}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      lane: REAL_LANE,
+      "x-lane": REAL_LANE,
+      "X-Product-ID": REAL_PRODUCT_ID,
+    },
+    body: JSON.stringify({
+      ...body,
+      baseReq: { productId: REAL_PRODUCT_ID, requestId: `wxmp-${Date.now()}-${Math.random().toString(16).slice(2, 8)}` },
+    }),
+  });
+  let json;
+  try {
+    json = await resp.json();
+  } catch {
+    json = null;
+  }
+  const ok = resp.ok && json?.baseResp?.statusCode === "0" && json?.user && json?.accessToken?.accessToken;
+  return { ok, status: resp.status, json };
+}
+
+/**
+ * Real-backend phone auth: no SMS code, no password -- login-by-phone hands
+ * back a live token for any phone that has registered, and register-by-phone
+ * takes any phone with no verification at all. This is the same lane bypass
+ * the app's own "使用 Narnia 测试账号" button uses (narniaIntegrationAuth.
+ * weapp.ts); calling the two RPCs directly just makes the phone number
+ * choosable instead of always-random, so the same account can be logged
+ * back into across runs.
+ *
+ * Mirrors that file's login() sequence exactly for the register path: call
+ * register-by-phone and discard its response, then call login-by-phone
+ * separately for the session -- matching production behavior rather than
+ * optimizing away a round trip, in case the two are not equivalent for some
+ * account state this lane cares about.
+ */
+async function phoneAuth(phone, nickname) {
+  const existing = await authCall("/api/auth/login-by-phone", { phone });
+  if (existing.ok) return { session: existing.json, isNew: false };
+
+  // register-by-phone's own response is not a reliable success signal on
+  // this lane -- observed returning a non-zero statusCode with no user/token
+  // on a registration that had, in fact, just succeeded (confirmed by the
+  // login-by-phone call right after it working). narniaIntegrationAuth.
+  // weapp.ts already discovered this in production: it calls
+  // registerByPhone() and discards the result outright, then makes a
+  // separate loginByPhone() call for the actual session. Do the same --
+  // fire it, ignore what it says, and let the follow-up login be the only
+  // thing that decides success or failure.
+  await authCall("/api/auth/register-by-phone", { phone, nickname }).catch(() => {});
+
+  const loggedIn = await authCall("/api/auth/login-by-phone", { phone });
+  if (!loggedIn.ok) {
+    throw new Error(
+      `Could not sign in with phone ${phone}: login-by-phone failed both before ` +
+        `registration (HTTP ${existing.status}, statusCode ${existing.json?.baseResp?.statusCode ?? "?"}) ` +
+        `and after it (HTTP ${loggedIn.status}, statusCode ${loggedIn.json?.baseResp?.statusCode ?? "?"}). ` +
+        `Check --real-base-url/--real-lane point at a lane where phone auth is enabled.`
+    );
+  }
+  return { session: loggedIn.json, isNew: true };
+}
+
+/**
+ * Shared tail for both real-backend sign-in tools (mp_use_real_account,
+ * mp_login_with_phone): cold-restart, seed storage with a real token, land
+ * on home, confirm the app actually treated it as authenticated. Pulled out
+ * once two callers needed the identical sequence rather than let them drift
+ * apart under separate edits later.
+ */
+async function coldSignInWithToken({ tokens, user, describeFailure }) {
+  // Order matters, and it is the opposite of what mp_login_as does.
+  //
+  // initSession() -- the only thing that reads credentials out of storage into
+  // the session singleton -- runs exclusively from App.onLaunch (app.ts). A
+  // reLaunch() is page navigation: it re-creates the page but never re-fires
+  // onLaunch. So restarting first and writing credentials afterwards leaves
+  // the app authenticated against whatever storage held at boot (nothing),
+  // and the freshly written token is simply never read. That failure is
+  // silent and looks like a backend hang: the tool reports success, the app
+  // sits on the home route, and homeFlow.load()'s `if (!userId) return`
+  // no-ops, so the page stays on "正在加载..." forever with no error and no
+  // request. Write first, then restart, so onLaunch sees the credentials.
+  const mp = await getMiniProgram();
+  await mp.callWxMethod("clearStorageSync");
+  // The app's storage contract is snake_case, and its readers bail to null on
+  // the first missing key rather than tolerating another shape:
+  // toTokenPairFromPayload() wants access_token/refresh_token, and
+  // toUserFromStorage() returns null unless user_id is set (shared/utils/
+  // storage.ts). Writing camelCase here produced a login that looked
+  // successful from the outside -- the tool reported success and the app sat
+  // on the home route -- but left the session as guest, so homeFlow.load()'s
+  // `if (!userId) return` no-oped and the page stayed on "正在加载..." with
+  // zero network calls ever issued. Callers pass ordinary camelCase; the
+  // mapping to the on-disk shape belongs here, once, mirroring the app's own
+  // writeTokenPairToStorage/writeUserToStorage.
+  await mp.callWxMethod("setStorageSync", TOKENS_KEY, {
+    access_token: tokens.accessToken,
+    refresh_token: tokens.refreshToken,
+    access_token_expires_at: tokens.accessTokenExpiresAt,
+    refresh_token_expires_at: tokens.refreshTokenExpiresAt,
+  });
+  await mp.callWxMethod("setStorageSync", USER_KEY, {
+    user_id: user.userId,
+    phone: user.phone,
+    nickname: user.nickname,
+    gender: user.gender,
+    has_profile_result: user.hasProfileResult,
+  });
+  // Restart *after* the write so App.onLaunch -> initSession() picks these up.
+  // Boot straight into home: the app re-routes by entryStage on its own, so
+  // where it actually settles is also the signal for whether it accepted the
+  // session.
+  const home = await resolveRoute("home");
+  let landedOn = await restartAndSettle(home.path);
+
+  if (/entry|login/i.test(landedOn)) {
+    throw new Error(describeFailure(landedOn));
+  }
+
+  // The app resolves its session asynchronously off App.onLaunch (app.ts runs
+  // `void bootstrapApplication().then(initSession)` without awaiting it),
+  // while the landing page's onLoad/onShow fire straight away. When the page
+  // wins that race, homeFlow.load() bails at `if (!userId) return`, leaves
+  // phase on 'idle', and nothing re-runs it once the session does land -- the
+  // page then sits on "正在加载..." indefinitely, with no error and no retry.
+  // A cold start driven by automation loses that race far more often than a
+  // human tapping through the entry page ever would. Bounce off the page and
+  // back to re-fire onShow after the session has settled; harmless when the
+  // race was already won, since refresh() is idempotent.
+  // restartAndSettle() tore down the connection `mp` points at and opened a
+  // new one, so re-acquire rather than reuse the dead handle.
+  const live = await getMiniProgram();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { nodes } = await readPage();
+    if (!nodes.some((n) => (n.text || "").includes("正在加载"))) break;
+    const other = await resolveRoute("mine");
+    await live[other.isTab ? "switchTab" : "reLaunch"](other.path);
+    await new Promise((r) => setTimeout(r, 1200));
+    await live[home.isTab ? "switchTab" : "reLaunch"](home.path);
+    await new Promise((r) => setTimeout(r, 2500));
+    landedOn = (await live.currentPage()).path;
+  }
+  return landedOn;
+}
+
 /* ------------------------------------------------------------------ *
  * Handlers
  * ------------------------------------------------------------------ */
@@ -1132,60 +1515,9 @@ const handlers = {
   },
 
   async mp_restart({ route } = {}) {
-    const mp = await getMiniProgram();
     const { path } = await resolveRoute(route || "entry");
-
-    // DevTools tears the automation channel down as it restarts, so this call
-    // often rejects even when the restart itself is fine. Drop the connection
-    // either way and let the reconnect below decide whether it worked.
-    try {
-      await mp.callWxMethod("restartMiniProgram", { path });
-    } catch {
-      // expected when the channel goes first
-    }
-    try {
-      mp.disconnect();
-    } catch {
-      // already gone
-    }
-    miniProgram = null;
-    // The bundle has not changed, but the table was read over a connection
-    // that no longer exists; re-read it rather than reason about what survives.
-    routeTable = null;
-
-    const deadline = Date.now() + CONNECT_TIMEOUT;
-    let lastError;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 1000));
-      let fresh;
-      try {
-        fresh = await getMiniProgram();
-        await fresh.currentPage();
-      } catch (err) {
-        lastError = err;
-        miniProgram = null;
-        continue;
-      }
-      // A freshly booted app is still deciding where to go -- the entry page
-      // resolves the session and may route somewhere else entirely, which on a
-      // real backend is the interesting part. Reporting the first page read
-      // back would name a page the app is in the middle of leaving, so wait
-      // until two reads in a row agree before saying where it landed.
-      let previous = null;
-      const settleBy = Date.now() + 8000;
-      while (Date.now() < settleBy) {
-        const here = (await fresh.currentPage()).path;
-        if (here === previous) return `Restarted, settled on ${here}.`;
-        previous = here;
-        await new Promise((r) => setTimeout(r, 800));
-      }
-      return `Restarted, still routing, last seen on ${previous}.`;
-    }
-    throw new Error(
-      `Restarted the mini program but could not reconnect within ${CONNECT_TIMEOUT}ms ` +
-        `(${lastError?.message || "no error reported"}). DevTools may still be reloading -- ` +
-        "check that its window is open and the project is still loaded."
-    );
+    const landedOn = await restartAndSettle(path);
+    return `Restarted, settled on ${landedOn}.`;
   },
 
   async mp_snapshot() {
@@ -1240,7 +1572,9 @@ const handlers = {
 
     // Keep both frames next to the verdict; a verdict nobody can check is not
     // evidence.
-    if (PROOF_DIR) {
+    // Evidence is a by-product of the verdict here, so an unusable proof dir
+    // skips the artefacts instead of failing the comparison itself.
+    if (proofDirReady()) {
       const dir = path.join(PROOF_DIR, "visual_comparisons");
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, `${safe}_current.png`), Buffer.from(image, "base64"));
@@ -1295,11 +1629,14 @@ const handlers = {
     return `Typed into ${target.placeholder ? `"${target.placeholder}"` : target.tag}`;
   },
 
-  async mp_trigger({ text, into, event, detail = {} }) {
-    if (!text && !into) {
-      throw new Error("Name the target with 'text', or with 'into' for an input.");
+  async mp_trigger({ text, into, selector, event, detail = {} }) {
+    if (!text && !into && !selector) {
+      throw new Error(
+        "Name the target with 'text', with 'into' for an input, or with " +
+          "'selector' for a component whose own text sits in a child node."
+      );
     }
-    const { el, target } = await elementTarget({ text, into });
+    const { el, target } = await elementTarget({ text, into, selector });
     await el.trigger(event, detail);
     return `Fired ${event} on ${target.tag} ${describeTarget(target)}`;
   },
@@ -1530,13 +1867,31 @@ const handlers = {
   },
 
   async mp_login_as({ preset }) {
+    // This used to be clearStorageSync + reLaunch, no restart. That looks like
+    // a cold start but is not one: the app's session lives in a module-level
+    // singleton (fe_app's useSession.ts `sessionState`), which page navigation
+    // does not touch and which reads storage only once. Hercules runs every
+    // scenario in this file's suite against the *same* DevTools process --
+    // only the MCP server is respawned per scenario, per this file's own
+    // design-constraint-① comment -- so a scenario that leaves the in-memory
+    // session on a different user or an incomplete-profile state was leaking
+    // that into every later scenario's mp_login_as, regardless of which
+    // fixture or storage values that later scenario set. Symptom looked like
+    // a product bug (report/chat entries stuck behind "complete your profile
+    // first"), reproduced identically with hand-written storage that should
+    // have satisfied the gate, and only went away after a full
+    // restartMiniProgram. Restarting first makes every login an actual cold
+    // start, matching what the README already prescribes for switching
+    // accounts by hand.
+    const restartPath = (await resolveRoute("entry")).path;
+    await restartAndSettle(restartPath);
     const mp = await getMiniProgram();
     await mp.callWxMethod("clearStorageSync");
 
     if (preset === "guest") {
       const home = await resolveRoute("home");
       await mp[home.isTab ? "switchTab" : "reLaunch"](home.path);
-      return "Guest state: storage cleared, on the home page.";
+      return "Guest state: restarted, storage cleared, on the home page.";
     }
 
     const tokens = FIXTURE.tokens ?? {};
@@ -1558,6 +1913,143 @@ const handlers = {
     return `Signed in as ${user.nickname || user.user_id || "the fixture user"}, on the home page.`;
   },
 
+  async mp_use_real_account({ state }) {
+    if (!ACCOUNT_POOL_PATH) {
+      throw new Error(
+        "No account pool configured. Pass --account-pool <path-to-pool.json> in " +
+          "this server's args in mcp_servers.json. See opt/.accounts/README.md."
+      );
+    }
+    let pool;
+    try {
+      pool = JSON.parse(fs.readFileSync(ACCOUNT_POOL_PATH, "utf8"));
+    } catch (err) {
+      throw new Error(`Could not read account pool at ${ACCOUNT_POOL_PATH}: ${err.message}`);
+    }
+    if (pool.baseUrl !== REAL_BASE_URL || pool.lane !== REAL_LANE) {
+      throw new Error(
+        `Account pool was built against ${pool.baseUrl} / ${pool.lane}, but this ` +
+          `server is configured for ${REAL_BASE_URL} / ${REAL_LANE}. Accounts from a ` +
+          "recycled lane are dead tokens -- refusing to use it rather than fail " +
+          "inside an assertion later."
+      );
+    }
+    const accounts = Array.isArray(pool.accounts) ? pool.accounts : [];
+    const account = accounts.find(
+      (a) => a && a.consumedAtMs == null && (!state || a.state === state)
+    );
+    if (!account) {
+      const byState = {};
+      for (const a of accounts) {
+        if (a?.consumedAtMs == null) byState[a.state] = (byState[a.state] || 0) + 1;
+      }
+      const available = Object.entries(byState).map(([k, n]) => `${k} (${n})`).join(", ") || "(none)";
+      throw new Error(
+        `No unconsumed account${state ? ` for state "${state}"` : ""} in the pool. ` +
+          `Unconsumed states on hand: ${available}.`
+      );
+    }
+
+    // Self-verify against the real backend before touching the app, so a dead
+    // or misprovisioned token fails with a clear reason instead of surfacing
+    // as "the app won't let me log in" three steps later. Token stays in this
+    // process only -- never in the request the model sees.
+    // Two things this call has to get right, both learned the hard way:
+    //
+    // 1. The gateway answers HTTP 200 even for an outright invalid token --
+    //    the real verdict is baseResp.statusCode ("0" is success, and an
+    //    unauthorized token comes back as 20200002001020). Checking resp.ok
+    //    alone accepts literally any string as a valid credential, which
+    //    makes this "self-verification" worse than none: it reports
+    //    confidence it never established.
+    // 2. baseReq is required, and on a GET it travels as query params. Omit
+    //    it and every response is BIZ_ESM_GATEWAY_DEGRADED regardless of the
+    //    token, so a good account looks broken.
+    const verifyUrl =
+      `${REAL_BASE_URL}/api/esm/v1/home/state?userId=${encodeURIComponent(account.userId ?? "0")}` +
+      `&baseReq.productId=${encodeURIComponent(REAL_PRODUCT_ID)}` +
+      `&baseReq.requestId=wxmp-verify-${Date.now()}`;
+    let verify;
+    try {
+      const resp = await fetch(verifyUrl, {
+        headers: {
+          Authorization: `Bearer ${account.token}`,
+          lane: REAL_LANE,
+          "x-lane": REAL_LANE,
+          "X-Product-ID": REAL_PRODUCT_ID,
+        },
+      });
+      const json = await resp.json().catch(() => null);
+      const code = json?.baseResp?.statusCode;
+      verify = { ok: resp.ok && code === "0", status: resp.status, code, msg: json?.baseResp?.statusMsg };
+    } catch (err) {
+      verify = { ok: false, status: 0, error: err.message };
+    }
+    if (!verify.ok) {
+      throw new Error(
+        `Pool account "${account.id}" (state ${account.state}) failed self-verification ` +
+          `against ${REAL_BASE_URL}/api/esm/v1/home/state: HTTP ${verify.status}` +
+          (verify.code ? `, statusCode ${verify.code}` : "") +
+          (verify.msg ? ` (${verify.msg})` : "") +
+          (verify.error ? ` (${verify.error})` : "") +
+          ". Token expired, lane recycled, or the pool was built under a different " +
+          `productId than --real-product-id (${REAL_PRODUCT_ID}).`
+      );
+    }
+
+    // Consume-on-read: mark it spent and write the pool back immediately, so a
+    // second call in this or another run cannot hand out the same account.
+    // Hercules runs one scenario at a time (no code path in runner.py/
+    // __main__.py starts scenarios concurrently), so this simple
+    // read-mark-write is enough -- see docs/mp-real-backend-plan.md.
+    account.consumedAtMs = Date.now();
+    fs.writeFileSync(ACCOUNT_POOL_PATH, JSON.stringify(pool, null, 2));
+
+    // Matches narniaIntegrationAuth.weapp.ts's own real-login path: the
+    // phone-registration RPCs this token comes from never return a refresh
+    // token, so the app takes a fixed placeholder rather than an empty
+    // string -- an empty one fails parseTokenPair's truthiness check and the
+    // app falls back to guest.
+    const landedOn = await coldSignInWithToken({
+      tokens: { accessToken: account.token, refreshToken: "narnia-integration-no-refresh-token" },
+      user: { userId: account.userId, phone: account.phone, nickname: account.nickname },
+      describeFailure: (page) =>
+        `Signed in with pool account "${account.id}" and the backend accepted the ` +
+        `token, but the app landed back on ${page} instead of home -- it did not ` +
+        "treat this as a logged-in session. Check that --real-base-url/--real-lane " +
+        "match the dist-integration build, and that domain checking is off for " +
+        "this project path.",
+    });
+    return `Signed in with real account "${account.id}" (state: ${account.state}), on ${landedOn}.`;
+  },
+
+  async mp_login_with_phone({ phone }) {
+    const isRandom = !phone;
+    const { phone: usePhone, nickname } = isRandom ? randomTestPhone() : { phone, nickname: "手动指定用户" };
+
+    const { session, isNew } = await phoneAuth(usePhone, nickname);
+    const user = session.user;
+    const landedOn = await coldSignInWithToken({
+      tokens: { accessToken: session.accessToken.accessToken, refreshToken: "narnia-integration-no-refresh-token" },
+      user: {
+        userId: String(user.userId),
+        phone: user.phone,
+        nickname: user.nickname,
+        gender: mapAuthGender(user.gender),
+      },
+      describeFailure: (page) =>
+        `Registered/logged in phone ${usePhone} against the real backend, but the app ` +
+        `landed on ${page} instead of home -- it did not treat this as a logged-in ` +
+        "session. Check that --real-base-url/--real-lane match the dist-integration " +
+        "build, and that domain checking is off for this project path.",
+    });
+    const maskedPhone = usePhone.length >= 7 ? `${usePhone.slice(0, 3)}****${usePhone.slice(-4)}` : usePhone;
+    return (
+      `Signed in as ${user.nickname || maskedPhone} (phone ${maskedPhone}, ` +
+      `${isNew ? "newly registered" : "existing account"}${isRandom ? ", random" : ""}), on ${landedOn}.`
+    );
+  },
+
   async mp_set_storage({ key, value }) {
     const mp = await getMiniProgram();
     await mp.callWxMethod("setStorageSync", key, value);
@@ -1565,6 +2057,14 @@ const handlers = {
   },
 
   async mp_get_storage({ key }) {
+    if (key === TOKENS_KEY) {
+      // Real accounts carry a live credential here (mock fixtures only ever
+      // hold access-token-001), and this tool's whole job is to hand its
+      // return value to the model -- the one place mp_login_as/
+      // mp_use_real_account deliberately avoid. Redact rather than trust the
+      // caller to know not to read this key.
+      return JSON.stringify({ redacted: "esm_tokens withheld -- contains a live credential" });
+    }
     const mp = await getMiniProgram();
     const value = await mp.callWxMethod("getStorageSync", key);
     return JSON.stringify(value ?? null);
@@ -1602,6 +2102,16 @@ const handlers = {
   },
 
   async mp_screenshot({ name }) {
+    // Unlike the automatic capture, this one was explicitly asked for, so a
+    // proof dir that cannot be written to is reported rather than swallowed:
+    // returning "saved" for a file that went into ./undefined/ is worse than
+    // failing, because the case then passes citing evidence nobody can find.
+    if (!proofDirReady()) {
+      throw new Error(
+        `Cannot save a screenshot: proof dir is unusable (${PROOF_DIR}). ` +
+          "Check --proof-dir in this server's args in mcp_servers.json."
+      );
+    }
     const mp = await getMiniProgram();
     const safe = String(name).replace(/[^a-zA-Z0-9_-]/g, "_");
     fs.mkdirSync(PROOF_DIR, { recursive: true });
@@ -1623,13 +2133,25 @@ const handlers = {
 
   async mp_evaluate({ expression }) {
     const mp = await getMiniProgram();
-    const result = await mp.evaluate(
-      function (code) {
-        // eslint-disable-next-line no-eval
-        return eval(code);
-      },
-      expression
-    );
+    // This used to ship a fixed callback that ran eval(code) inside the mini
+    // program. The logic layer has no eval (nor new Function), so every call
+    // died with "Uncaught eval is not a function" -- the escape hatch was
+    // unusable for its entire life.
+    //
+    // miniprogram-automator serializes the callback with
+    // Function.prototype.toString() and hands that source to DevTools to
+    // evaluate, so building the function here in Node bakes the expression
+    // into the source that gets sent. Nothing needs eval on the app side.
+    let fn;
+    try {
+      fn = new Function(`return (${expression});`);
+    } catch (err) {
+      throw new Error(
+        `Not a valid JS expression: ${err.message}. This runs as an expression, ` +
+          "not a statement block -- use an IIFE if you need statements."
+      );
+    }
+    const result = await mp.evaluate(fn);
     return JSON.stringify(result ?? null);
   },
 };
@@ -1669,7 +2191,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+/**
+ * Final-state evidence, captured as this process is killed.
+ *
+ * Auto-capture only fires on tools in CAPTURED -- all of them actions. A
+ * scenario's last step is almost always an assertion, which goes through
+ * mp_snapshot and takes no picture, so the last screenshot on disk shows the
+ * page *before* the final navigation. 124 of 126 mp cases end that way, which
+ * makes this a property of the mechanism rather than a per-case oversight:
+ * the most important moment of a run is the one nothing photographs.
+ *
+ * Hercules kills this server after every scenario (MCPHelper.destroy), so
+ * SIGTERM is exactly "the scenario just ended" -- one extra picture, no case
+ * edits. Best-effort throughout: a screenshot must never delay or break exit,
+ * and the connection may already be half dead, hence the timeout race.
+ */
+async function captureFinalState() {
+  // Skipped when no proof dir was configured: this fires on every SIGTERM, so
+  // without the guard `npm run smoke` and every manual run would leave a stray
+  // screenshot in mcp_servers/wxmp/. Per-action captures keep their old cwd
+  // behaviour -- those happen because someone drove a step and may want to see
+  // it; this one is automatic and unasked for.
+  if (!PROOF_DIR_EXPLICIT) return;
+  if (!AUTO_SHOT || !miniProgram || !proofDirReady()) return;
+  const name = `${RUN_STAMP}_999_final_state.png`;
+  try {
+    await Promise.race([
+      miniProgram.screenshot({ path: path.join(PROOF_DIR, name) }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("timed out after 5s")), 5000)
+      ),
+    ]);
+    log(`final-state screenshot: ${name}`);
+  } catch (err) {
+    log(`final-state screenshot failed: ${err.message}`);
+    noteEvidenceGap(`final state: ${err.message}`);
+  }
+}
+
+let shuttingDown = false;
 async function shutdown() {
+  // SIGINT then SIGTERM in quick succession would otherwise run this twice and
+  // race the screenshot against its own disconnect.
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await captureFinalState();
   if (miniProgram) {
     try {
       await miniProgram.disconnect();

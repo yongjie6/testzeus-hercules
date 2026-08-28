@@ -145,6 +145,12 @@ dmypy.json
 **/output
 **/gherkin_files
 
+# Explicit, defensive rule: real access tokens live here (mp_use_real_account's
+# pool). **/opt/* already covers it, but that's a negation-based rule someone
+# narrowing it later could loosen without noticing this directory depends on
+# it. Keep this so the tokens stay out of the repo either way.
+opt/.accounts/
+
 **/opt/input/test.feature
 **/opt/test_data/test_data.txt
 
