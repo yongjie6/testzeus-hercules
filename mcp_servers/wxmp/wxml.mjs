@@ -19,9 +19,14 @@ const INTERACTIVE = new Set([
 
 function parseAttrs(raw) {
   const attrs = {};
-  const re = /([a-zA-Z_:][\w:.-]*)\s*=\s*"([^"]*)"/g;
+  // The value is optional: a bare `disabled` carries no ="..." but still means
+  // on, and dropping it here would report a dead control as tappable.
+  const re = /([a-zA-Z_:][\w:.-]*)(?:\s*=\s*"([^"]*)")?/g;
   let m;
-  while ((m = re.exec(raw))) attrs[m[1]] = m[2];
+  while ((m = re.exec(raw))) {
+    if (!m[1]) continue;
+    attrs[m[1]] = m[2] === undefined ? "true" : m[2];
+  }
   return attrs;
 }
 
@@ -54,6 +59,18 @@ export function parseWxml(wxml) {
   return nodes;
 }
 
+/**
+ * A boolean WXML attribute is only "on" when its value is truthy *as WXML sees
+ * it*. Taro renders enabled controls as `disabled="false"` — a non-empty string,
+ * so a plain `!== undefined` check reports every such control as disabled. That
+ * made mp_snapshot label live inputs disabled, and cases waited forever for a
+ * flag that was never set. The parser's regex only matches name="value" pairs,
+ * so a bare attribute never lands in attrs at all; undefined stays off.
+ */
+function boolAttr(v) {
+  return v !== undefined && v !== "false" && v !== "";
+}
+
 function finish(node, nodes) {
   const text = node.text.join(" ").replace(/\s+/g, " ").trim();
   const interactive = INTERACTIVE.has(node.tag);
@@ -63,8 +80,8 @@ function finish(node, nodes) {
     id: node.attrs.id || node.attrs["data-sid"] || null,
     testId: node.attrs["data-testid"] || node.attrs["data-test-id"] || null,
     text,
-    disabled: node.attrs.disabled !== undefined,
-    checked: node.attrs.checked !== undefined,
+    disabled: boolAttr(node.attrs.disabled),
+    checked: boolAttr(node.attrs.checked),
     src: node.attrs.src || null,
     // Inputs rarely carry text of their own; the placeholder is what a person
     // reads to know which field is which, so it is how we address them.

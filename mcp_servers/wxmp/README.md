@@ -560,6 +560,30 @@ Scenario: 内嵌 H5 活动页能正常下单
 发完事件后用 `mp_snapshot` 确认控件文案变了再往下走，例如头像按钮会从「点击设置头像」
 变成「点击更换」，日期控件会从「选择出生年月日」变成具体日期。
 
+## disabled 是算出来的，不是 WXML 里写了就算
+
+`mp_snapshot` 给控件打的 `disabled` 标记曾经全是假的，这个坑值得单列一节，因为它
+**让用例挂在一个根本不存在的现象上，而且看上去完全合理**。
+
+Taro 把布尔属性渲染成字符串：可用的输入框在 WXML 里是 `disabled="false"`。旧解析写的是
+
+```js
+disabled: node.attrs.disabled !== undefined,   // ← "false" 也是 !== undefined
+```
+
+于是**每一个声明过 disabled 的控件都被报成 disabled**，无论真假。表现是对话用例里
+agent 反复 snapshot、看到 `textarea [disabled]`，老老实实等了 180 秒然后判失败——
+而同一时刻直接读 `element.attribute("disabled")` 拿到的是字符串 `"false"`，
+连续采样 4 分钟一次都没真的禁用过。
+
+现在是 `wxml.mjs` 里的 `boolAttr()`：`undefined`（没写）和 `"false"` / `""` 都算没开启，
+裸属性 `<button disabled>` 算开启（属性正则也补了无值分支，之前裸属性压根不入 attrs，
+是反方向的假阴性——真死的按钮会被报成可点）。
+
+留下的教训：**快照里的状态位是解析出来的推断，不是观测值。** 一个断言如果只靠快照里的
+某个 flag 就判失败，先用 `mp_evaluate` 或 `element.attribute()` 交叉验一次再下结论。
+本轮排查里"某某入口是 disabled 态"这类结论，都是这个 bug 的产物。
+
 ## 已知边界
 
 - **原生弹窗点不到** —— 授权、支付、订阅消息都是原生 UI，只能 `mp_mock_wx` 绕
