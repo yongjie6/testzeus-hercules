@@ -1,5 +1,6 @@
 # tool_registry.py
 import csv
+import hashlib
 import os
 from collections import defaultdict
 from collections.abc import Callable
@@ -125,6 +126,19 @@ def assertion_logger(logging_string: str) -> None:
     assertion_logs_path = os.path.join(proof_path, "assertion_logs.log")
     with open(assertion_logs_path, "a", encoding="utf-8") as file:
         file.write(logging_string + "\n")
+
+
+def assertion_subject(examined: str) -> str:
+    """被断言的那份内容的短指纹，随每条断言记录一起落台账。
+
+    判定侧要把「同一条断言的重试」折叠成一条，否则模型写错一次再改对会被当成被测方的
+    缺陷。而只按 (路径, 运算符, 期望值) 折叠会撞车：跨页一致性检查在两个页面上用的正是
+    同一个期望值，A 页判否、B 页判是，折叠之后只剩下 B 页那条通过的——恰好把这类缺陷
+    折没了。指纹进折叠键，两页就分得开。
+
+    只取前 12 位十六进制：它的用途是区分，不是校验完整性。
+    """
+    return hashlib.sha1((examined or "").encode("utf-8")).hexdigest()[:12]
 
 
 def sec_logger(logging_string: str) -> None:
