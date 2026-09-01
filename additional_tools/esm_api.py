@@ -20,6 +20,7 @@
 import asyncio
 import difflib
 import json
+import math
 import os
 import re
 import time
@@ -319,8 +320,17 @@ def _flatten_query(payload: Dict[str, Any], prefix: str = "") -> Dict[str, str]:
     return flat
 
 
-def _summarize(response: httpx.Response) -> Dict[str, Any]:
-    """把网关响应压成用例断言真正要看的那几项。"""
+def _summarize(response: httpx.Response, elapsed_ms: Optional[int] = None) -> Dict[str, Any]:
+    """把网关响应压成用例断言真正要看的那几项。
+
+    `elapsedMs` 是这次请求的墙钟耗时。它进返回值是为了让「接口有多慢」变成一条可断言的
+    事实：缺陷 7099268477（答题接口 300ms~1.9s 波动）是压测脚本一次性跑出来的，脚本产出
+    不进回归，所以那条缺陷修没修、有没有回退，此后没有任何用例在看。有了这个字段，
+    `assert_json_path $.elapsedMs lt <上界>` 就够了，不需要任何新框架。
+
+    注意它测的是本机到网关的往返，包含网络。判定阈值要按泳道实测基线设，不要照搬 PRD 里
+    的服务端耗时指标——那是两个量。
+    """
     try:
         payload = response.json()
     except ValueError:
@@ -329,6 +339,7 @@ def _summarize(response: httpx.Response) -> Dict[str, Any]:
             "statusCode": None,
             "bizCodeName": None,
             "statusMsg": None,
+            "elapsedMs": elapsed_ms,
             "rawBody": response.text[:2000],
         }
     base_resp = payload.get("baseResp") or {}
@@ -345,6 +356,7 @@ def _summarize(response: httpx.Response) -> Dict[str, Any]:
         # 服务端处理这次请求时的时间，用于给用例判断"某个时间戳是不是刚刚才写入的"
         # 提供一个不依赖 harness 本地时钟的参照点——两者都来自同一台服务器。
         "serverTimeMs": base_resp.get("serverTimeMs"),
+        "elapsedMs": elapsed_ms,
         "body": body,
     }
 
@@ -380,6 +392,7 @@ async def _send(
         json_body["baseReq"] = {**base_req, **existing} if isinstance(existing, dict) else base_req
         request_query = _flatten_query(query or {})
 
+    started = time.perf_counter()
     response = await _client().request(
         method,
         url,
@@ -388,8 +401,9 @@ async def _send(
         json=json_body,
         timeout=timeout,
     )
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-    summary = _summarize(response)
+    summary = _summarize(response, elapsed_ms)
     file_logger(
         json.dumps(
             {
@@ -401,6 +415,7 @@ async def _send(
                     "statusCode": summary.get("statusCode"),
                     "bizCodeName": summary.get("bizCodeName"),
                     "statusMsg": summary.get("statusMsg"),
+                    "elapsedMs": elapsed_ms,
                 }
             },
             ensure_ascii=False,
@@ -613,6 +628,96 @@ async def esm_risk_sample(
     captured = _capture(result, extract_json)
     if captured:
         result["captured"] = captured
+    return json.dumps(result, ensure_ascii=False)
+
+
+@tool(
+    agent_names=["api_nav_agent"],
+    name="esm_latency_probe",
+    description=(
+        "Call one endpoint N times and report the latency distribution, for asserting that an endpoint "
+        "has not become slow. Use this instead of reading elapsedMs off a single esm_call: one sample "
+        "cannot separate a real regression from ordinary jitter. Measured against the lane, the cheapest "
+        "unauthenticated endpoint sits around 390ms with occasional ~1s outliers, so a single-sample "
+        "bound tight enough to catch a real slowdown also fires on noise.\n"
+        "Parameters:\n"
+        "  - method, path, label, body_json, query_json: exactly as esm_call takes them.\n"
+        "  - samples: how many calls to make (2-30). More samples make p90 meaningful; each one costs a "
+        "real round trip, so keep it small for expensive endpoints.\n"
+        "Returns minMs, p50Ms, p90Ms, maxMs, samples (the raw list), plus failed -- the number of calls "
+        'that did not come back with statusCode "0" -- and succeeded. Failed calls are excluded from the '
+        "distribution, because a rejected request returns far faster than a real one and would make an "
+        "endpoint that is erroring on every call look fast; still assert failed == 0 first, since a "
+        "distribution over two surviving samples says little. Assert on p90Ms, not maxMs: one outlier "
+        "should not turn a suite red.\n"
+        "Pick the bound from a measured baseline on the same lane, not from a PRD figure -- this measures "
+        "the round trip from the runner, which includes the network, while a PRD number is server-side "
+        "handling time. Those are different quantities and confusing them produces a threshold that is "
+        "either always red or never."
+    ),
+)
+async def esm_latency_probe(
+    method: Annotated[str, "HTTP method: GET or POST."],
+    path: Annotated[str, "Gateway path starting with /api/esm/v1/. May contain ${name}."],
+    label: Annotated[str, "User label created by esm_new_user. Empty string sends the request without an Authorization header."] = "",
+    body_json: Annotated[str, "JSON object string for the POST body. May contain ${name}."] = "",
+    query_json: Annotated[str, "JSON object string for GET query parameters. May contain ${name}."] = "",
+    samples: Annotated[float, "How many calls to make, 2 to 30."] = 10,
+) -> Annotated[str, "Minified JSON: minMs, p50Ms, p90Ms, maxMs, samples, failed."]:
+    count = int(samples)
+    if not 2 <= count <= 30:
+        raise ValueError(f"samples 要在 2 到 30 之间，当前是 {count}。少于 2 个样本谈不上分布，多于 30 个的成本换不来精度。")
+    session = _session(label)
+    _publish_session_vars()
+    resolved_path = interpolate_value(path)
+    body = interpolate_value(_parse_json_arg(body_json, "body_json"))
+    query = interpolate_value(_parse_json_arg(query_json, "query_json"))
+
+    timings: list = []
+    failed = 0
+    for _ in range(count):
+        summary = await _send(
+            method,
+            resolved_path,
+            token=session.get("token"),
+            body=body,
+            query=query,
+            request_id_prefix="esm-probe",
+        )
+        if str(summary.get("statusCode")) != "0":
+            # 失败的调用往往比成功的快得多（参数校验就返回了）。把它们算进分布，一个全在
+            # 报错的接口看起来性能极好——而用例只断言 p90 的话就此判绿。所以它们不进分布，
+            # 只计数；分布描述的始终是成功路径。
+            failed += 1
+            continue
+        timings.append(int(summary.get("elapsedMs") or 0))
+
+    if not timings:
+        # 一次都没成功过，没有分布可言。返回一个不可能通过任何耗时上界的结果，而不是
+        # 一份空统计——空统计配上 `p90Ms 应该小于 X` 会判绿。
+        result = {"path": resolved_path, "samples": [], "minMs": None, "p50Ms": None, "p90Ms": None, "maxMs": None, "failed": failed}
+        file_logger(json.dumps({"esm_latency_probe": result}, ensure_ascii=False))
+        raise RuntimeError(f"{resolved_path} 的 {count} 次调用全部失败（statusCode != 0），没有成功样本可以统计耗时。先把接口调通再谈性能。")
+
+    ordered = sorted(timings)
+
+    def percentile(fraction: float) -> int:
+        """最近秩法。用 int(n*0.9) 会在 n=10 时取到下标 9，也就是最大值本身——
+        那样 p90 恒等于 max，「判 p90 不判 max」这条建议就落空了，一个离群点照样判红。"""
+        rank = max(1, math.ceil(fraction * len(ordered)))
+        return ordered[rank - 1]
+
+    result = {
+        "path": resolved_path,
+        "samples": ordered,
+        "minMs": ordered[0],
+        "p50Ms": percentile(0.5),
+        "p90Ms": percentile(0.9),
+        "maxMs": ordered[-1],
+        "failed": failed,
+        "succeeded": len(ordered),
+    }
+    file_logger(json.dumps({"esm_latency_probe": result}, ensure_ascii=False))
     return json.dumps(result, ensure_ascii=False)
 
 

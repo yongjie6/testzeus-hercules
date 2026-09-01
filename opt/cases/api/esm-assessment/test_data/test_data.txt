@@ -82,6 +82,32 @@ baseReq、也不会带登录态。
 - 第 144 题通过完整性检查后 `completed` 为 true 并返回 `resultId`。
 - `RestartAnswering` 必须带 `confirmed: true`。
 
+## 断言值域用 all_gte / all_lte，别用 gt / lt
+
+`gt` / `lt` 只比路径命中的**第一个**值。`$.body.result.scoreResults[*].score` 打到 16 个
+维度分，写 `lt 3` 等于只查了第一维，后面 15 维越界照样判通过——缺陷 7102943924
+（16 维分值超出 [-3,3]）正是这个形状：首维在区间内，越界的排在后面。
+
+约束「每个命中值」用 `all_gte` / `all_lte`，失败时会报出第一个越界的下标和值。
+`gt` / `lt` 命中多个值时结果里会留 note 点名这件事，不会静默。
+
+## 耗时断言用 esm_latency_probe，不要读单次的 elapsedMs
+
+`esm_call` 现在会在返回里带 `elapsedMs`（本次请求 runner 到网关的往返，含网络）。它便于
+排查，但**不适合直接拿来断言**：2026-08-31 在 feat-esm-v3-0 上实测，最便宜的免登录接口
+`/runtime/state` p50 是 394ms，p90 却到 1253ms——单次采样分不出真实劣化和抖动。
+
+要断言耗时就用 `esm_latency_probe`：连打 N 次，返回 `minMs / p50Ms / p90Ms / maxMs /
+samples / failed`。三条纪律：
+
+- **判 p90，不判 max**，一个离群点不该让整套变红
+- **先判 `failed` 是 0**，失败的调用往往在参数校验就返回了，比成功的快得多，混进分布会让
+  一个全在报错的接口看起来性能很好
+- **阈值来自同泳道同 runner 的实测基线**，不要照搬 PRD 里的服务端耗时指标——那是服务端
+  处理时间，这里量的是含网络的往返，两个量混用得到的阈值不是恒红就是恒绿
+
+当前基线（n=10，复用连接）：`/answering/answer` p50 398ms / p90 403ms。
+
 ## 前置条件成本
 
 单位成本按 2026-08-26 在 feat-esm-v3-0 泳道实测：

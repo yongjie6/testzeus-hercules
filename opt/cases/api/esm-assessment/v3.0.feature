@@ -141,4 +141,32 @@ Feature: ESM V3.0 答题与量表结果接口
     And body.result.dimensionInterpretations 的条数应该和 body.result.scoreResults 相同
     And body.result.scoreResults 的每条都应该有非空的 dimensionId 和 title
     And body.result.dimensionInterpretations 的 dimensionId 集合应该和 body.result.scoreResults 的完全一致
+    # 值域：16 维分值必须落在 [-3, 3]。用 all_gte / all_lte，不要用 gt / lt——
+    # 后者只比路径命中的第一个值，越界的维度排在后面就查不到（缺陷 7102943924 就是这个形状）。
+    And body.result.scoreResults[*].score 的每个值都应该不小于 -3
+    And body.result.scoreResults[*].score 的每个值都应该不大于 3
     And body.result.sessionSource 应该是 "SCALE_RESULT_SESSION_SOURCE_ANSWERING_SESSION"
+
+  # 前置：一个不做量表的新用户，约 5 秒
+  #
+  # 缺陷 7099268477：答题接口耗时在 300ms 到 1.9s 之间波动，页面上能明显感到卡顿。
+  # 那条是压测脚本一次性跑出来的，脚本产出不进回归，所以它修没修、有没有回退，
+  # 此后没有任何用例在看。这条把它变成可回归的。
+  #
+  # 判 p90 不判单次，也不判 max：2026-08-31 在 feat-esm-v3-0 上实测（n=10，复用连接）
+  #   /answering/answer        p50 398ms  p90 403ms  max 406ms
+  #   /runtime/state           p50 394ms  p90 1253ms max 1266ms
+  # 同一批里最便宜的免登录接口反而有 1.2s 的长尾，说明单次采样分不出真实劣化和抖动。
+  # 上界取实测 p90 的三倍，够宽到不被抖动打中，又比缺陷里那个 1.9s 的尾巴紧。
+  # 换泳道或换 runner 要重新测这个基线，不要照搬 PRD 里的服务端耗时指标——那是另一个量，
+  # 这里量的是 runner 到网关的往返，含网络。
+  Scenario: TC-ESM30-AS-15 重复提交同一答案的写路径耗时不劣化
+    Given 用 esm_new_user 建一个标签为 "P" 的用户，不做量表
+    When 调用 POST /api/esm/v1/answering/start-or-resume，用标签 "P"，用 extract_json 捕获 {"sessionId": "$.body.session.sessionId"}
+    Then statusCode 应该是 "0"
+    # 同一题同一答案重复提交按契约是幂等的（见 TC-ESM30-AS-04），所以可以安全地连打十次
+    When 用 esm_latency_probe 打 POST /api/esm/v1/answering/answer，用标签 "P"，body 传 {"sessionId": "${sessionId}", "questionNo": 1, "choiceValue": 3}，采样 10 次
+    # 先判有没有失败：失败的调用往往在参数校验就返回了，比成功的快得多，
+    # 混进分布会让一个全在报错的接口看起来性能很好
+    Then failed 应该是 0
+    And p90Ms 应该小于 1200
