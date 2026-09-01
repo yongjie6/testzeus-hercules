@@ -21,6 +21,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import automator from "miniprogram-automator";
+import { normalizeConsoleEvent, normalizeExceptionEvent } from "./mp_events.mjs";
 import { applyDevToolsCompat } from "./compat.mjs";
 import { parseWxml, formatSnapshot, findByText, findInputs } from "./wxml.mjs";
 
@@ -424,6 +425,44 @@ async function gatewayCall(method, route, body) {
 
 let miniProgram = null;
 
+/**
+ * 把小程序的 console 和未捕获异常写进 proofs 目录，交给 Hercules 的 observer 判定。
+ *
+ * 为什么不在这里判红：判定口径只有一处，在 testzeus_hercules/core/invariants.py。
+ * 这边只负责把原始事件按约定的行形状吐出去（和 playwright_manager 写 console_logs.json
+ * 用的是同一种形状），什么算判红、什么只留痕由那边决定。两边各判一遍的话迟早会漂移，
+ * 而漂移的方向通常是各自变宽。
+ *
+ * 单独写 mp_console_logs.json 而不是追加到 console_logs.json：那份归 playwright 写，
+ * 两个进程各写各的文件，谁都不用去争同一个句柄。observer 两份都读。
+ *
+ * 这条链路是小程序套件目前唯一的自动判定源。在它之前，observer 读的两份证据文件只有
+ * playwright 会写，而小程序套件走的是开发者工具，所以 observer 在那边什么也看不到——
+ * 而 67 条缺陷里有 60 条在小程序端。
+ */
+const MP_CONSOLE_LOG = "mp_console_logs.json";
+
+function recordMiniProgramEvent(entry) {
+  if (!proofDirReady()) return;
+  try {
+    fs.appendFileSync(path.join(PROOF_DIR, MP_CONSOLE_LOG), JSON.stringify(entry) + "\n", "utf8");
+  } catch (err) {
+    // 采证失败不能反过来搞垮正在跑的用例。
+    log(`WARNING: could not record mini program event: ${err.message}`);
+  }
+}
+
+function attachEventCapture(mp) {
+  // on("console") 会让 automator 发 App.enableLog，所以必须在连上之后主动订阅，
+  // 不订阅一条都收不到。归一化放在 mp_events.mjs 里，那边有 node --test 覆盖——
+  // 这两个事件的负载形状拿不到确切定义，猜错的后果是静默无输出。
+  mp.on("console", (msg) => {
+    const entry = normalizeConsoleEvent(msg);
+    if (entry) recordMiniProgramEvent(entry);
+  });
+  mp.on("exception", (err) => recordMiniProgramEvent(normalizeExceptionEvent(err)));
+}
+
 async function getMiniProgram() {
   if (miniProgram) return miniProgram;
   try {
@@ -431,6 +470,7 @@ async function getMiniProgram() {
       wsEndpoint: WS_ENDPOINT,
       timeout: CONNECT_TIMEOUT,
     });
+    attachEventCapture(miniProgram);
     log("connected to", WS_ENDPOINT);
     return miniProgram;
   } catch (err) {
@@ -865,6 +905,20 @@ const TOOLS = [
         },
       },
     },
+  },
+  {
+    name: "mp_calls",
+    description:
+      "List the backend calls the page has made so far, with how many times each " +
+      "was called and whether the fixture actually had an answer for it. Use this " +
+      "to assert on traffic rather than on pixels: that tapping send fired exactly " +
+      "one SendMessage, that entering a page fetched its data at all, that a retry " +
+      "did not fire the same write twice. Also the fastest way to explain a blank " +
+      "or spinning page -- an uncovered route returned a bare envelope with no " +
+      "payload, so the page had nothing to render and no error to show. Pass the " +
+      "result to assert_ui, or read `uncovered`. Only the mock gateway records " +
+      "this; on the real-backend suite there is nothing to list.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "mp_ws_push",
@@ -1703,6 +1757,33 @@ const handlers = {
     return (
       `Backend data is now [${(body.scenes ?? names).join(" + ")}]. Set the login ` +
       "state after this, not before, so it is seeded from this data."
+    );
+  },
+
+  async mp_calls() {
+    const body = await gatewayCall("GET", "/calls");
+    const rows = body.calls ?? [];
+    if (!rows.length) {
+      return (
+        "No backend calls recorded yet. Either the page has not loaded, or this " +
+        "run is against the real backend, where the mock gateway sees nothing."
+      );
+    }
+    const lines = rows
+      .slice()
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+      .map((r) => `${r.method} ${r.path}  x${r.count}${r.covered ? "" : "  [uncovered]"}`);
+    const uncovered = body.uncovered ?? [];
+    // 未覆盖的路由要单独再说一遍，不能只靠上面那行末尾的标记。base fixture 给每条 proto
+    // 路由都种了一个只有 baseResp 的空壳，所以没被 fixture 覆盖的接口不会 404，而是
+    // "成功但没有数据" —— 页面于是转圈或空白，既不报错也没有线索。这正是一条用例明明
+    // 走完了却什么也没验到的典型成因。
+    return (
+      lines.join("\n") +
+      (uncovered.length
+        ? `\n\nuncovered (fixture 没有给这些路由准备数据，它们返回的是空壳，` +
+          `页面拿不到内容也不会报错): ${uncovered.join(", ")}`
+        : "\n\nuncovered: none")
     );
   },
 

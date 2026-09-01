@@ -48,7 +48,10 @@ curl -sX POST http://127.0.0.1:39102/fixture -d '{"scenes":["state-scale-done","
 | `POST /ws/push` | 往应用推一条 WS 事件，`mp_ws_push` 用 |
 | `POST /ws/disconnect` | 断掉应用的 WS 连接，`mp_ws_disconnect` 用 |
 
-`GET /calls` 是排查空白页的第一站。`base/proto/defaults.json` 给**每一个** proto 路由都种了一个只有 `baseResp` 的空响应，所以没被 fixture 覆盖的接口不会 404，而是返回成功加一个空 body——页面转圈或提示重试，但没有任何地方指出是哪个调用回来是空的。`uncovered` 字段直接给出这份名单。
+`GET /calls` 是排查空白页的第一站，`mp_calls` 工具就是读它。`base/proto/defaults.json` 给**每一个** proto 路由都种了一个只有 `baseResp` 的空响应，所以没被 fixture 覆盖的接口不会 404，而是返回成功加一个空 body——页面转圈或提示重试，但没有任何地方指出是哪个调用回来是空的。`uncovered` 字段直接给出这份名单。
+
+它同时是一条断言：一条用例把页面走完了、断言也都通过了，但这一页的接口全都返回空壳——
+那条通过什么也没验到。把 `uncovered` 为空当成用例的一部分，这种假绿就能在当场暴露。
 
 WS 那两条是转发：网关自己的 `/__push` `/__disconnect` 挂在自签 HTTPS 上，转到明文控制端口，MCP server 就不用处理证书（它由 Hercules 跨 stdio 边界拉起，几乎拿不到环境变量）。
 
@@ -321,6 +324,27 @@ fixture 里都是 mock 假值（`access-token-001`），没有真实凭据。
 | `mp_set_storage` / `mp_get_storage` / `mp_clear_storage` | storage 读写清 |
 | `mp_mock_wx` / `mp_restore_wx` | mock wx API |
 | `mp_ws_push` / `mp_ws_disconnect` | 按时刻驱动 WS 流事件、断连，见下方「流事件」 |
+| `mp_calls` | 页面到目前为止请求过哪些接口、各几次、哪些 fixture 没覆盖（读 `GET /calls`，只有 mock 网关有）|
+
+### 自动采证：`mp_console_logs.json`
+
+连上开发者工具之后，server 会订阅 `miniProgram.on("console")` 和 `on("exception")`，
+把事件按 JSONL 追加进 `--proof-dir` 下的 `mp_console_logs.json`：
+
+```json
+{"type":"console","level":"error","text":"Uncaught TypeError: ...","location":{"url":"miniprogram"}}
+```
+
+这是**给 Hercules 的 observer 节点读的**（`testzeus_hercules/core/invariants.py`），
+不需要任何用例主动调用。行形状和 playwright 写的 `console_logs.json` 一致，因为判定口径
+只有一处——这边只负责把原始事件吐出去，什么算判红、什么只留痕由那边决定。两边各判一遍
+迟早会漂移，而漂移的方向通常是各自变宽。
+
+归一化在 `mp_events.mjs`，有 `node --test mp_events.test.mjs` 覆盖。单独抽出来是因为
+automator 的事件负载形状拿不到确切定义（`.d.ts` 里是 `any`），而猜错的后果不是报错，
+是**静默什么都不产出**——观测链路自己的假绿，比没有观测更糟，因为报告会显示
+「跑过了、没发现异常」。所以形状对不上时也会把原始负载整包留一行，第一次真机跑完
+看一眼这个文件就知道该怎么收窄。
 | `mp_wait` / `mp_screenshot` | 等待 / 截图存证 |
 | `mp_visual_check` | 把当前画面交给视觉模型回答一个问题，**看快照看不到的东西** |
 | `mp_visual_compare` | 和基准图比对，用于视觉回归 |
