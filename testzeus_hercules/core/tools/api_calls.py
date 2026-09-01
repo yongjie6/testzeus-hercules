@@ -275,6 +275,16 @@ def _var_store() -> Dict[str, Any]:
     return _VARIABLES[get_global_conf().get_default_test_id()]
 
 
+def set_variable_value(as_name: str, value: Any) -> None:
+    """Store a value under ``${as_name}`` for the rest of this scenario.
+
+    Named rather than letting other modules reach into ``_var_store()`` directly: the UI-side
+    assertions capture into the same namespace, so an API-created id and a UI-read label are
+    referenced identically, and there is exactly one place that decides what that namespace is.
+    """
+    _var_store()[as_name] = value
+
+
 def stringify_interpolated_value(value: Any) -> str:
     """
     Render a captured value as plain text for a context that can't carry a native type
@@ -362,7 +372,7 @@ async def extract_from_response(
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
     value = matches[0]
-    _var_store()[as_name] = value
+    set_variable_value(as_name, value)
     return json.dumps({"extracted": True, "name": as_name, "path": path, "value": value}, ensure_ascii=False, separators=(",", ":"))
 
 
