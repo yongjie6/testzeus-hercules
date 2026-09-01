@@ -6,12 +6,22 @@
 #   ./run-version.sh 1.0 mp-nav      只跑一个套件
 #   ./run-version.sh regression      跑核心回归集（按 opt/cases/regression.txt 挑选）
 #   ./run-version.sh regression mp   回归集里的小程序部分
+#   ./run-version.sh 3.0 mp --include-blocked   连 @blocked 的用例一起跑，看它是否已能通过
 #
 # 三种类型要求的环境不一样：api 要泳道，mp 要开发者工具和 mock 网关。
 # 所以分类型跑不是图方便，是能不能跑起来的前提。
 set -euo pipefail
 V="${1:?用法: ./run-version.sh <版本|regression> [类型|套件]   类型: api / web / mp}"
 SEL="${2:-}"
+
+# 被 @blocked 标注的用例默认不组装，也就跑不到。带上这个开关是为了回答一件事：
+# 那条挡住它的东西是不是已经不存在了。解除 blocked 之前先这么跑一次确认，
+# 而不是直接把标签删掉再看报告。
+INCLUDE_BLOCKED=""
+if [ "${3:-}" = "--include-blocked" ] || [ "$SEL" = "--include-blocked" ]; then
+  INCLUDE_BLOCKED="--include-blocked"
+  [ "$SEL" = "--include-blocked" ] && SEL=""
+fi
 
 TYPES="api web mp mp-real"
 TYPE=""
@@ -21,10 +31,10 @@ if [ -n "$SEL" ]; then
 fi
 
 if [ -n "$TYPE" ]; then
-  ./assemble_version.py "$V" "$TYPE"
+  ./assemble_version.py "$V" "$TYPE" $INCLUDE_BLOCKED
   BASE="opt/.run/$V-$TYPE"
 else
-  ./assemble_version.py "$V"
+  ./assemble_version.py "$V" $INCLUDE_BLOCKED
   BASE="opt/.run/$V"
 fi
 

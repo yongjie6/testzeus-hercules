@@ -9,7 +9,14 @@ Feature: 小程序个人中心与注销
     When 跳转到「我的」页面
     And 点击「我的报告」
     And 点击「返回」
-    Then 不应该看到「看过报告后个人页报告入口右侧的未读红点」
+    # 红点是个没有文案、没有 aria-label、不可交互的圆点，mp_snapshot 的 finish() 直接把
+    # 这种节点丢掉（mcp_servers/wxmp/wxml.mjs）。所以「快照里没有红点」永远成立，写成
+    # assert_ui absent 是一条恒真断言——缺陷在不在它都绿。
+    # 这正是 mp_visual_check 的用途：让视觉模型看画面回答，并留下截图供人复核。
+    # 代价是它是判读不是确定性断言，不进断言台账；等前端给红点加上 aria-label 或 testId，
+    # 这条应该改回 assert_ui absent。
+    Then 用 mp_visual_check 确认「我的报告」这一行右侧已经没有未读红点
+    And 对当前页面截图存证
 
   Scenario: TC-ESM-022-L1-2 个人页报告入口红点消除与头像昵称编辑入口
     Given 以 logged-in 状态进入小程序，后端数据用 TC-REPORT-001
@@ -23,7 +30,9 @@ Feature: 小程序个人中心与注销
     When 跳转到「我的」页面
     And 点击「我的报告」
     And 点击「返回」
-    Then 不应该看到小红点
+    # 同上：红点在快照里不存在，只能靠视觉判读。这一条盯的是「我的测评报告」那个入口。
+    Then 用 mp_visual_check 确认「我的测评报告」入口上已经没有未读红点
+    And 对当前页面截图存证
 
   Scenario: TC-ESM-036-L1-6 我的页两个报告类入口与「我的测评报告」未读红点
     Given 以 logged-in 状态进入小程序，后端数据用 TC-REPORT-001

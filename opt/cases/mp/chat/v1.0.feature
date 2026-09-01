@@ -144,7 +144,9 @@ Feature: 小程序对话
     When 输入「请用带标题和有序列表的格式讲讲我的沟通风格」
     And 点击「发送」
     And 等待 AI 输出结束
-    Then 不应该看到「AI 回复正文中的 Markdown 源码符号（# ## - 1. ** *）」
+    # 「不应该出现 Markdown 记号」不是一段能写死的文案，是一类形态：
+    # 用 assert_ui 的 no_placeholder，它的 raw_markdown 规则就是干这个的。
+    Then AI 回复正文里不应该有没渲染的 Markdown 记号
 
   Scenario: TC-ESMV1-016-L1-3 AI 回复的 Markdown 元素正确渲染且可完整复制
     Given 以 logged-in 状态进入小程序

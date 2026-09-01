@@ -21,8 +21,11 @@ Feature: 小程序对话
 
   Scenario: TC-ESM-033-L1-4 关系对话初次进入的开场、问询与推荐问题转化
     Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
-    When 点击「推荐问题」
-    Then 不应该看到「被点击的那条推荐问题在推荐区里的残留」
+    # 点之前先把那条推荐问题的原文抓下来。用例作者写不出这句文案（它由后端生成），
+    # 而模型读一遍再自己记住等于没有断言——抓进变量，后面才谈得上"它消失了"。
+    When 用 capture_ui_value 把推荐区里第一条推荐问题的文案抓进变量 picked
+    And 点击那条推荐问题
+    Then 推荐区里不应该再出现 ${picked}
 
   Scenario: TC-ESM-033-L1-5 关系对话初次进入的开场、问询与推荐问题转化
     Given 以 logged-in 状态进入小程序，后端数据用 TC-HOME-001/candidate-mutation
@@ -80,14 +83,16 @@ Feature: 小程序对话
     When 点击「报告」
     Then 他人报告页顶部导航上的导航项个数应该不多于 3
 
+  @blocked:fixture
+  # blocked: 需要把 summary 生成人为拖长，当前 mock 网关的控制端口没有这个开关
   Scenario: TC-ESM-039-L1-11 对话页会话恢复、报告跳转、身份标签与右滑返回
-    # ⛔ 当前不可执行：需要把 summary 生成人为拖长，当前 mock 网关的控制端口没有这个开关
     Given 以 logged-in 状态进入小程序
     When 跳转到「对话」页面
     Then summary 尚未生成时个人对话页上出现的后端报错提示条数应该为 0
 
+  @blocked:fixture
+  # blocked: 需要 summary 未就绪窗口，当前 mock 网关的控制端口没有这个开关
   Scenario: TC-ESM-039-L1-12 对话页会话恢复、报告跳转、身份标签与右滑返回
-    # ⛔ 当前不可执行：同上，需要 summary 未就绪窗口
     Given 以 logged-in 状态进入小程序
     When 跳转到「对话」页面
     Then summary 尚未生成时个人对话页渲染出的消息或等待态元素个数应该不少于 1
@@ -97,55 +102,62 @@ Feature: 小程序对话
     When 点击「新会话」
     Then 点击「新建对话」后新会话中展示的推荐问题条数应该不少于 1
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-0 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
     Given 以 logged-in 状态进入小程序
     When 输入「压力有点大」
     And 点击「发送」
     And 等待 AI 输出结束
     Then 三十轮压测过程中小程序的崩溃次数应该为 0
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-1 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：同上
     Given 以 logged-in 状态进入小程序
     When 输入「压力有点大」
     And 点击「发送」
     And 等待 AI 输出结束
     Then 三十轮压测中实际完成的问答轮次数应该不少于 30
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-2 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：同上
     Given 以 logged-in 状态进入小程序
     When 输入「压力有点大」
     And 点击「发送」
     And 等待 AI 输出结束
     Then 三十轮中用户提问气泡排在其对应 AI 回复之下的轮次数应该为 0
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-3 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：同上
     Given 以 logged-in 状态进入小程序
     When 输入「请尽可能详细地展开说说」
     And 点击「发送」
     And 等待 AI 输出结束
     Then 超长回复中渲染正文短于接口返回正文的轮次数应该为 0
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-4 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：同上
     Given 以 logged-in 状态进入小程序
     When 输入「请尽可能详细地展开说说」
     And 点击「发送」
     And 等待 AI 输出结束
     Then 三十轮中接近输出上限的超长回复轮次数应该不少于 3
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-5 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：同上
     Given 以 logged-in 状态进入小程序
     When 跳转到「首页」页面
     And 跳转到「对话」页面
     Then 三十轮压测后退出再进入所展示的历史消息条数应该不少于 60
 
+  @blocked:fixture
+  # blocked: 三十轮真实流式压测，mock 网关造不出，且「点击发送」当前定位不到
   Scenario: TC-ESM-044-L1-6 长会话多轮流式输出的崩溃、顺序、截断与重进一致性
-    # ⛔ 当前不可执行：同上
     Given 以 logged-in 状态进入小程序
     When 跳转到「首页」页面
     And 跳转到「对话」页面

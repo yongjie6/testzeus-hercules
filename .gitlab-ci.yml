@@ -76,9 +76,20 @@ lint:
       --known-failures opt/cases/known_failures.txt
       --summary /tmp/lint-summary.json --junit /tmp/lint-junit.xml;
       test $? -ne 2
-  # Gherkin 风格检查只报告，不判定：用例写法的收敛是渐进的，不该拿它拦住一次修复。
+    # 用例质量。原先这一条挂在 after_script 上 `|| true`，理由是"用例写法的收敛是渐进的"。
+    # 那个理由只对风格成立；现在的 error 级规则报的是「这条用例执行不了」——断言里写的是
+    # 对目标的描述而不是界面上的字、整条没有 Then、标题重复到报告里分不清。这些不是风格，
+    # 合进来就是一条假装有覆盖的用例，正该在合入前拦住。
+    #
+    # 渐进收敛由 --max-weak 这个棘轮承担：存量 40 条「…个数应该不少于 1」允许留着，
+    # 但只许降不许升。这个数字降到 0 的那天，把参数一起删掉。
+    #
+    # 只卡 opt/cases（我们自己的产品用例库）。tests/ 下那几个是上游 Hercules 的夹具，
+    # 故意写成非标准 Gherkin 来验证宽松切分器本身——拿门禁去卡它们是卡错了对象。
+    - uv run --no-sync python helper_scripts/lint_gherkin.py opt/cases --strict --max-weak 40
+  # tests/ 下的夹具仍然扫一遍，只报告不判定。
   after_script:
-    - uv run --no-sync python helper_scripts/lint_gherkin.py || true
+    - uv run --no-sync python helper_scripts/lint_gherkin.py tests || true
 
 # ── CI 镜像 ───────────────────────────────────────────────────────────────────
 # 设计第 8 章：构建 Runner 不用 privileged DinD / hostPath / docker socket，走 kaniko。

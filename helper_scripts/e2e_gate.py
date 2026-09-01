@@ -14,6 +14,10 @@
   - known_failures.txt 里登记的用例失败了不算失败，但**通过了算失败**——逼着人把它
     从名单里删掉，否则名单会变成一个只进不出的坟场
 
+被 @blocked 排除的用例不算失败（它们是有意不组装的），但它们的条数和 kind 分布会进
+summary 的 blocked 段和终端输出。不这么做的话，「跑了 28 条全绿」和「本来 49 条、
+21 条压根没进来」在报告里没有任何区别。
+
 退出码：0 通过 / 1 有失败 / 2 门禁自身无法判定（目录不存在、XML 损坏）
 """
 
@@ -51,6 +55,31 @@ def parse_known_failures(path: Path) -> tuple[list[dict[str, str]], list[str]]:
             continue
         entries.append({"pattern": pattern, "reason": reason})
     return entries, problems
+
+
+def read_blocked(run_dir: Path) -> dict[str, Any]:
+    """读 assemble_version.py 写下的 blocked.json。
+
+    被 @blocked 的用例不进这次运行，所以它们不会在报告里留下任何痕迹——「本轮跑了 28 条
+    全绿」和「本来有 49 条、21 条根本没组装」在 JUnit 里长得一模一样。判定口径不变
+    （blocked 不算失败，它是有意排除的），但数字必须出现在产出里，否则覆盖收缩的唯一
+    信号就没了。
+
+    文件缺失和「一条都没排除」要分得开：前者说明这次组装还是老版本，不该被读成后者。
+    """
+    path = run_dir / "blocked.json"
+    if not path.is_file():
+        return {"available": False, "count": 0, "by_kind": {}, "entries": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"available": False, "count": 0, "by_kind": {}, "entries": [], "error": f"{path} 读不了: {exc}"}
+    entries = data.get("entries") or []
+    by_kind: dict[str, int] = {}
+    for entry in entries:
+        kind = entry.get("kind", "unknown")
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    return {"available": True, "included": bool(data.get("include_blocked")), "count": len(entries), "by_kind": by_kind, "entries": entries}
 
 
 def suite_of(report: Path, run_dir: Path) -> str:
@@ -171,6 +200,7 @@ def main() -> int:
     summary_path = Path(args.summary)
     blockers: list[str] = []
 
+    blocked = read_blocked(run_dir)
     known, known_problems = parse_known_failures(Path(args.known_failures))
     # 名单自己写坏了要当门禁错误报出来，不能默默当成空名单——那会把一条本该被豁免的红
     # 变成真红，或者反过来。
@@ -214,7 +244,12 @@ def main() -> int:
     elif not cases:
         blockers.append("报告里一条用例都没有")
 
-    for count, label in ((counts["failed"], "条用例失败"), (counts["errors"], "条用例出错"), (counts["skipped"], "条用例被跳过（设计不允许 E2E skip）"), (counts["unexpected_passes"], "条已知失败用例转绿，请从 known_failures.txt 删掉")):
+    for count, label in (
+        (counts["failed"], "条用例失败"),
+        (counts["errors"], "条用例出错"),
+        (counts["skipped"], "条用例被跳过（设计不允许 E2E skip）"),
+        (counts["unexpected_passes"], "条已知失败用例转绿，请从 known_failures.txt 删掉"),
+    ):
         if count:
             blockers.append(f"{count} {label}")
 
@@ -236,6 +271,7 @@ def main() -> int:
             "deploy_mode": args.deploy_mode,
         },
         "totals": counts,
+        "blocked": blocked,
         "duration_seconds": round(sum(c["duration_seconds"] for c in cases), 2),
         "gitlab": gitlab_context(),
         "cases": cases,
@@ -263,6 +299,12 @@ def main() -> int:
         if case["status"] in ("failed", "error", "skipped") and case["message"]:
             print(f"      {case['message'].splitlines()[0][:160]}")
     print(f"\n  共 {counts['cases']} 条：通过 {counts['passed']} / 失败 {counts['failed']} / 出错 {counts['errors']} / 已知失败 {counts['expected_failures']}")
+    if blocked["count"]:
+        kinds = "  ".join(f"{kind} {count}" for kind, count in sorted(blocked["by_kind"].items()))
+        state = "已一并组装" if blocked.get("included") else "未组装，不计入上面的总数"
+        print(f"  另有 @blocked {blocked['count']} 条（{state}）：{kinds}")
+    elif not blocked["available"]:
+        print("  (本次运行没有 blocked.json，用 ./assemble_version.py 重新组装才能看到被排除的用例数)")
     print(f"  summary: {summary_path}")
     if blockers:
         print("\n  判定失败：")
