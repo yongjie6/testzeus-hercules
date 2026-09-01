@@ -8,7 +8,6 @@ evidence that was captured and came back empty.
 import asyncio
 
 import pytest
-
 from testzeus_hercules.config import get_global_conf
 from testzeus_hercules.core import runner as runner_module
 from testzeus_hercules.core.runner import SingleCommandInputRunner

@@ -12,7 +12,6 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from junitparser import Failure
-
 from testzeus_hercules.utils.junit_helper import JUnitXMLGenerator
 
 PASSING = {"is_assert": True, "is_passed": True, "terminate": "yes", "assert_summary": "ok"}

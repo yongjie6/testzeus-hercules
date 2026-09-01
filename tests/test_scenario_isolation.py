@@ -9,7 +9,6 @@ import asyncio
 from typing import Any
 
 import pytest
-
 import testzeus_hercules.__main__ as main_module
 
 
@@ -116,7 +115,6 @@ def test_the_report_actually_marks_the_aborted_scenario_failed(captured, tmp_pat
     the generated XML, which is what anyone reading the run actually sees.
     """
     from junitparser import Failure
-
     from testzeus_hercules.utils import junit_helper
     from testzeus_hercules.utils.junit_helper import JUnitXMLGenerator
 

@@ -2,9 +2,10 @@ import os
 import shutil
 import subprocess
 import sys
+
 import pytest
-from tests.test_base import setup_test_environment, copy_feature_files, compare_results
 from dotenv.main import dotenv_values
+from tests.test_base import compare_results, copy_feature_files, setup_test_environment
 
 
 # Function to retrieve all feature folders

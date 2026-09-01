@@ -1,7 +1,12 @@
 import os
-import pytest
 from typing import Generator
-from testzeus_hercules.config import SingletonConfigManager, set_global_conf, get_global_conf
+
+import pytest
+from testzeus_hercules.config import (
+    SingletonConfigManager,
+    get_global_conf,
+    set_global_conf,
+)
 
 
 class TestCertificateErrors:
