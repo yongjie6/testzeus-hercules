@@ -785,6 +785,15 @@ const TOOLS = [
           type: "boolean",
           description: "Require the whole text to match; defaults to substring matching",
         },
+        occurrence: {
+          type: "string",
+          enum: ["first", "last"],
+          description:
+            "Which one to tap when several elements show the same text, counted " +
+            "down the page. Defaults to 'first'. Use 'last' for the newest item " +
+            "in a growing list -- the like button under the latest chat reply, " +
+            "for instance, where 'first' would hit the oldest message instead.",
+        },
       },
       required: ["text"],
     },
@@ -1640,7 +1649,7 @@ const handlers = {
     return `Compared ${page.path} against ${safe}:\n${answer}`;
   },
 
-  async mp_tap_text({ text, exact = false }) {
+  async mp_tap_text({ text, exact = false, occurrence = "first" }) {
     const { page, nodes } = await readPage();
     const hits = findByText(nodes, text, exact);
     if (!hits.length) {
@@ -1650,11 +1659,21 @@ const handlers = {
           (visible.length ? visible.map((t) => `"${t}"`).join(", ") : "(none)")
       );
     }
-    const target = hits[0];
+    // findByText ranks by how closely the wording matches, so hits[0] is the
+    // best match but not necessarily the topmost one. "last" has to mean
+    // "furthest down the page" -- that is what a person means by the last
+    // reply -- so narrow to the elements showing exactly what the best match
+    // shows and index those in document order (`nodes` is already in it).
+    const best = hits[0];
+    const surface = best.text || best.label;
+    const sameSurface = nodes.filter((n) => n.id && (n.text || n.label) === surface);
+    const ordered = sameSurface.length ? sameSurface : [best];
+    const target = occurrence === "last" ? ordered[ordered.length - 1] : ordered[0];
     const el = await page.$(`#${target.id}`);
     if (!el) throw new Error(`Element #${target.id} disappeared before it could be tapped.`);
     await el.tap();
-    return `Tapped ${target.tag} "${target.text || target.label}"`;
+    const where = ordered.length > 1 ? ` (${occurrence} of ${ordered.length})` : "";
+    return `Tapped ${target.tag} "${target.text || target.label}"${where}`;
   },
 
   async mp_input_text({ text, into = "" }) {
