@@ -7,7 +7,7 @@ import json
 import re
 import time
 import traceback
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 import nest_asyncio
 import openai
@@ -29,11 +29,12 @@ from testzeus_hercules.core.agents.sec_nav_agent import SecNavAgent
 from testzeus_hercules.core.agents.sql_nav_agent import SqlNavAgent
 from testzeus_hercules.core.agents.time_keeper_nav_agent import TimeKeeperNavAgent
 from testzeus_hercules.core.extra_tools import *  # noqa: F403
+from testzeus_hercules.core.invariants import BINDING, InvariantWatcher
 from testzeus_hercules.core.post_process_responses import (
     final_reply_callback_planner_agent as notify_planner_messages,
 )
 from testzeus_hercules.core.tools import *  # noqa: F403
-from testzeus_hercules.core.tools.tool_registry import tool_registry
+from testzeus_hercules.core.tools.tool_registry import assertion_logger, tool_registry
 from testzeus_hercules.utils.llm_helper import (
     GraphChatResult,
     convert_model_config_to_langchain_format,
@@ -101,6 +102,8 @@ class SimpleHercules:
         self._graph = None
         self._last_graph_result: GraphChatResult | None = None
         self._nav_token_log: list[dict[str, Any]] = []
+        # 观察者按字节偏移增量读证据文件，所以状态必须跨步保留在实例上（见 _observer_node）
+        self._invariants = InvariantWatcher()
 
     @staticmethod
     def _step_signature(step: str) -> str:
@@ -933,6 +936,51 @@ class SimpleHercules:
             return "assertion"
         return "executor"
 
+    async def _observer_node(self, state: AgentState) -> Dict[str, Any]:
+        """每个 executor 步之后跑一遍全局不变量，把违例写进断言台账。
+
+        存在的理由：漏检的缺陷里有一大类是「用例已经走到那个页面，只是没人想到要在那里
+        断言什么」。这一类补不出来——再多写用例，作者也只会断言他想得到的那几件事。
+        唯一的办法是让某些检查在每一步之后自动发生，不经过用例作者。
+
+        证据一直在采（proofs 下的 console_logs.json / network_logs.json 两份 JSONL），
+        但全仓没有任何一处读它们。这个节点把「采集」变成「判定」。
+
+        产出只有两条路，都是真的接上了的：写断言台账（那是判定源，junit_helper 会因为
+        台账里未通过的断言把用例判红），和把判红级别的推回 planner 的对话（那是它下一轮
+        看得见的唯一途径）。曾经还往 AgentState 里塞过一份，但没有任何地方读它——
+        送进报告的 json_data 是 planner 自己那份 JSON，不是图状态。只写不读的状态字段
+        会让人以为它接上了什么，删掉了。
+        """
+        try:
+            violations = self._invariants.poll(str(get_global_conf().get_proof_path(test_id=self.stake_id) or ""))
+        except Exception as exc:  # noqa: BLE001
+            # 观察者是为了提高发现率加进来的，它自己绝不能成为用例失败的原因。
+            # 图里任何节点抛异常都会掀翻整条 scenario（run() 只捕 openai.BadRequestError），
+            # 那会把「证据文件格式没见过」变成「这条用例失败了」，比不加这个节点还糟。
+            logger.warning("observer: 采集不变量时出错，本步跳过（%s: %s）", type(exc).__name__, exc)
+            return {}
+        if not violations:
+            return {}
+
+        for violation in violations:
+            assertion_logger(json.dumps(violation.as_record(), ensure_ascii=False))
+            logger.warning("invariant %s %s: %s", violation.severity, violation.kind, violation.detail)
+
+        binding = [violation for violation in violations if violation.severity == BINDING]
+        result: Dict[str, Any] = {}
+        if binding:
+            logger.error("observer: %d 条判红级别的不变量违例，本条用例将被判失败", len(binding))
+            # 只把判红级别的推回 planner 的对话。放进 state 字段它是看不见的——planner 读的
+            # 是 messages。而这类信号往往正好解释了它接下来会遇到的怪现象（页面空白、按钮
+            # 没反应），让它自己再摸索一遍是浪费。4xx 和普通控制台报错不推：它们本来就不
+            # 改红绿，塞进对话只会挤占 planner 推进用例的注意力。
+            summary = "; ".join(f"{violation.kind}: {violation.detail}" for violation in binding)
+            result["messages"] = list(state.get("messages", [])) + [
+                HumanMessage(content=f"[observer] 上一步之后检测到 {len(binding)} 条全局不变量违例，本条用例已因此判失败，继续执行只是为了取证：{summary}")
+            ]
+        return result
+
     def _route_after_executor(self, state: AgentState) -> Literal["planner", "assertion"]:
         # Always return to planner — it decides when to assert
         return "planner"
@@ -941,6 +989,10 @@ class SimpleHercules:
         graph = StateGraph(AgentState)
         graph.add_node("planner", self._planner_node)
         graph.add_node("executor", self._executor_node)
+        # 观察者在每个 executor 步之后无条件跑一次。放在 executor 和 planner 之间，
+        # 而不是让 planner 自己去查：planner 只看到 helper 的一段散文，证据文件里的
+        # 5xx 和未捕获异常它根本看不见，而那些正是用例作者没想到要断言的东西。
+        graph.add_node("observer", self._observer_node)
         graph.add_node("assertion", self._assertion_node)
         graph.set_entry_point("planner")
         graph.add_conditional_edges(
@@ -948,8 +1000,9 @@ class SimpleHercules:
             self._route_after_planner,
             {"executor": "executor", "assertion": "assertion", "end": END},
         )
+        graph.add_edge("executor", "observer")
         graph.add_conditional_edges(
-            "executor",
+            "observer",
             self._route_after_executor,
             {"planner": "planner", "assertion": "assertion"},
         )
