@@ -33,6 +33,9 @@ def _run(**kwargs) -> dict:
 
 def test_eq_pass_and_fail():
     passing = _run(response_json=GW12_RESPONSE, path="$.statusCode", operator="eq", expected='"0"')
+    # subject 是被断言那份响应的指纹，判定侧靠它区分「同一条断言的重试」和「同一条断言
+    # 跑在两份不同的响应上」，值本身不参与断言语义。
+    assert passing.pop("subject")
     assert passing == {"assertion": "PASSED", "path": "$.statusCode", "operator": "eq", "actual": "0", "expected": "0"}
 
     failing = _run(response_json=GW12_RESPONSE, path="$.body.myPage.hasScaleResult", operator="eq", expected="true")
@@ -253,3 +256,62 @@ def test_every_assertion_is_recorded_not_just_the_failures():
     finally:
         get_global_conf().get_proof_path = original
     assert [r["assertion"] for r in records] == ["PASSED", "FAILED"]
+
+
+SCALE_RESULT_RESPONSE = json.dumps(
+    {
+        "statusCode": "0",
+        "body": {
+            "result": {
+                "scoreResults": [
+                    {"dimensionId": "d1", "score": 1.2},
+                    {"dimensionId": "d2", "score": -0.4},
+                    {"dimensionId": "d3", "score": 7.9},
+                ]
+            }
+        },
+    },
+    ensure_ascii=False,
+)
+
+
+def test_gt_only_checks_the_first_match_and_says_so():
+    """缺陷 7102943924「16 维分值超出 [-3,3]」的形状：首维在区间内，越界的排在后面。
+    gt/lt 只比 matches[0]，那条越界的值根本没被看过——所以这里要留下明确的提示。"""
+    out = _run(response_json=SCALE_RESULT_RESPONSE, path="$.body.result.scoreResults[*].score", operator="lt", expected="3")
+    assert out["assertion"] == "PASSED"
+    assert "all_gte/all_lte" in out["note"]
+
+
+def test_all_lte_catches_a_later_out_of_range_value():
+    out = _run(response_json=SCALE_RESULT_RESPONSE, path="$.body.result.scoreResults[*].score", operator="all_lte", expected="3")
+    assert out["assertion"] == "FAILED"
+    assert out["actual"] == 7.9
+    assert out["first_violation_index"] == 2
+    assert out["checked"] == 3
+
+
+def test_all_gte_passes_when_every_value_is_in_bound():
+    out = _run(response_json=SCALE_RESULT_RESPONSE, path="$.body.result.scoreResults[*].score", operator="all_gte", expected="-3")
+    assert out["assertion"] == "PASSED"
+    assert out["checked"] == 3
+
+
+def test_all_lte_counts_array_elements_when_the_path_lands_on_the_array():
+    """和 count_eq 同一口径：路径打在数组本身时约束的是它的元素。"""
+    out = _run(response_json='{"body":{"scores":[1,2,9]}}', path="$.body.scores", operator="all_lte", expected="3")
+    assert out["assertion"] == "FAILED"
+    assert out["checked"] == 3
+    assert out["first_violation_index"] == 2
+
+
+def test_all_gte_on_a_path_matching_nothing_is_a_failure():
+    out = _run(response_json='{"body":{}}', path="$.body.scores[*]", operator="all_gte", expected="0")
+    assert out["assertion"] == "FAILED"
+    assert "matched nothing" in out["reason"]
+
+
+def test_all_lte_against_a_non_numeric_value_is_an_error_not_a_pass():
+    out = _run(response_json='{"a":["x"]}', path="$.a", operator="all_lte", expected="3")
+    assert out["assertion"] == "ERROR"
+    assert "index 0" in out["reason"]

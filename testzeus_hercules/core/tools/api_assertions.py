@@ -3,13 +3,17 @@ import re
 from typing import Annotated, Any
 
 from testzeus_hercules.core.tools.api_calls import interpolate_value
-from testzeus_hercules.core.tools.tool_registry import assertion_logger, tool
+from testzeus_hercules.core.tools.tool_registry import (
+    assertion_logger,
+    assertion_subject,
+    tool,
+)
 from testzeus_hercules.utils.jsonpath_helper import find_json_path
 from testzeus_hercules.utils.logger import logger
 
 # Operators kept scalar-in/scalar-out (no tuples, no nested schemas) so the generated
 # JSON Schema stays provider-portable — see the tool signatures below.
-_OPERATORS = ("eq", "ne", "contains", "exists", "not_exists", "not_empty", "gt", "lt", "count_eq", "eq_path")
+_OPERATORS = ("eq", "ne", "contains", "exists", "not_exists", "not_empty", "gt", "lt", "all_gte", "all_lte", "count_eq", "eq_path")
 
 
 def _coerce(raw: str) -> Any:
@@ -137,7 +141,7 @@ def _record(result: dict) -> str:
         "  - response_json: the JSON string returned by the API call being verified (e.g. from "
         "generic_http_api or esm_call).\n"
         "  - path: JSONPath into that JSON, for example $.body.myPage.hasScaleResult.\n"
-        "  - operator: eq, ne, contains, exists, not_exists, not_empty, gt, lt, count_eq, or eq_path.\n"
+        "  - operator: eq, ne, contains, exists, not_exists, not_empty, gt, lt, all_gte, all_lte, count_eq, or eq_path.\n"
         '  - expected: the expected value as a string; JSON literals are honored ("true", "0", '
         '"null", \'"some string"\'), anything else is compared as a raw string. For eq_path, this is '
         "instead a second JSONPath compared against the first, for cross-field checks within the same "
@@ -153,6 +157,11 @@ def _record(result: dict) -> str:
         "count_eq counts the ELEMENTS of the array the path lands on, so $.body.items count_eq 0 is the "
         "way to assert an empty list. Append [*] to the path to count how many times the path itself "
         "matched instead.\n"
+        "gt and lt compare only the FIRST value the path matched, so a path landing on many values "
+        "(e.g. every dimension score) checks one of them and silently ignores the rest. To bound every "
+        "matched value use all_gte / all_lte: path=$.body.result.scoreResults[*].score with "
+        "operator=all_gte expected=-3, then again with all_lte expected=3, asserts the whole set is "
+        "inside [-3, 3] and names the first out-of-range value on failure.\n"
         "To assert a whole sequence, point the path at every value and give expected as a JSON array: "
         "path=$.body.questions[0].choices[*].choiceValue with expected=[1,2,3,4,5,6] compares the full "
         "ordered list in one call, instead of one assertion per element.\n"
@@ -166,7 +175,7 @@ def _record(result: dict) -> str:
 async def assert_json_path(
     response_json: Annotated[str, "The JSON string returned by the API call being verified."],
     path: Annotated[str, "JSONPath into response_json, e.g. $.body.myPage.hasScaleResult."],
-    operator: Annotated[str, "One of: eq, ne, contains, exists, not_exists, not_empty, gt, lt, count_eq, eq_path."] = "eq",
+    operator: Annotated[str, "One of: eq, ne, contains, exists, not_exists, not_empty, gt, lt, all_gte, all_lte, count_eq, eq_path."] = "eq",
     expected: Annotated[
         str,
         "Expected value as a string (JSON literals honored). For eq_path, a second JSONPath to compare against instead.",
@@ -207,7 +216,7 @@ async def assert_json_path(
         result = {"assertion": "ERROR", "path": path, "operator": operator, "reason": f"bad JSONPath {path!r}: {e}"}
         return _record(result)
 
-    result: dict = {"path": path, "operator": operator}
+    result: dict = {"path": path, "operator": operator, "subject": assertion_subject(response_json)}
     if _autocorrected:
         result["note"] = _autocorrected
 
@@ -230,6 +239,44 @@ async def assert_json_path(
         if passed and _unresolved_placeholder(actual):
             result.update({"assertion": "FAILED", "reason": f"值是未替换的占位符 {actual!r}，说明上一步没有捕获到这个变量"})
             return _record(result)
+    elif operator in ("all_gte", "all_lte"):
+        # gt / lt 只看 matches[0]。`$..score` 这种打到 16 个值的路径，用 gt 断言等于只查了
+        # 第一维，其余 15 维越界照样通过——缺陷 7103182112 那一批里的「16 维分值超出
+        # [-3,3]」正是这个形状：首维在区间内，越界的在后面。这两个运算符要求每个命中值
+        # 都满足，失败时报出第一个越界的下标和值，而不是笼统说一句不通过。
+        if not matches:
+            hint = _captured_variable_hint(path) or _available_keys(doc, path)
+            result.update({"assertion": "FAILED", "reason": "path matched nothing" + (f"; {hint}" if hint else ""), "expected": _resolve_expected(expected)})
+            return _record(result)
+        # 路径命中唯一一个数组时，作者要约束的是它的元素，不是数组本身——和 count_eq 同一口径。
+        values = matches[0] if len(matches) == 1 and isinstance(matches[0], list) else matches
+        if not values:
+            # 空集上「每个值都满足」在逻辑上恒真，但在断言语境里它意味着「本该有一批值，
+            # 结果一个都没有」——量表结果页没数据正是这个形状，而这两个运算符就是为
+            # 16 维分值加的。判绿等于把最该报的那种缺陷放过去。
+            # 注意同一份数据写成 `$.body.scores[*]` 时命中零次，走的是上面 `not matches`
+            # 分支判 FAILED；两种写法必须给同一个结论。
+            result.update({"assertion": "FAILED", "reason": "路径命中的是一个空数组：没有任何值可以检查，这通常说明本该有数据的地方是空的", "expected": _resolve_expected(expected), "actual": []})
+            return _record(result)
+        want = _resolve_expected(expected)
+        result["expected"] = want
+        result["checked"] = len(values)
+        offender = None
+        for index, value in enumerate(values):
+            try:
+                ok = value >= want if operator == "all_gte" else value <= want
+            except TypeError as e:
+                result.update({"assertion": "ERROR", "reason": f"cannot compare {type(value).__name__} {value!r} at index {index} with {type(want).__name__} {want!r}: {e}"})
+                return _record(result)
+            if not ok:
+                offender = (index, value)
+                break
+        passed = offender is None
+        if passed:
+            result["actual"] = f"all {len(values)} value(s) within bound"
+        else:
+            result["actual"] = offender[1]
+            result["first_violation_index"] = offender[0]
     elif operator == "count_eq":
         want = _resolve_expected(expected)
         # `$.body.items` 命中的是数组本身（1 个），不是它的元素。作者写 count_eq 时想数的
@@ -331,6 +378,8 @@ async def assert_json_path(
             elif operator == "contains":
                 passed = str(want) in str(actual)
             elif operator in ("gt", "lt"):
+                if len(matches) > 1:
+                    result["note"] = f"path matched {len(matches)} values; gt/lt only compares the first — use all_gte/all_lte to bound every value"
                 try:
                     passed = actual > want if operator == "gt" else actual < want
                 except TypeError as e:
